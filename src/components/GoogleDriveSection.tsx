@@ -15,6 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import { AppointmentRecord, CLINIC_INFO } from '../data/clinicData';
+import { AppUserProfile, saveUserProfile } from '../services/authService';
 import {
   getAccessToken,
   googleSignIn,
@@ -34,12 +35,14 @@ interface GoogleDriveSectionProps {
   appointments: AppointmentRecord[];
   calculatorSummaryText: string;
   userRole?: 'user' | 'admin';
+  onGoogleLoginSuccess?: (profile: AppUserProfile) => void;
 }
 
 export const GoogleDriveSection: React.FC<GoogleDriveSectionProps> = ({
   appointments,
   calculatorSummaryText,
   userRole = 'user',
+  onGoogleLoginSuccess,
 }) => {
   const [needsAuth, setNeedsAuth] = useState<boolean>(true);
   const [user, setUser] = useState<User | null>(null);
@@ -133,6 +136,22 @@ export const GoogleDriveSection: React.FC<GoogleDriveSectionProps> = ({
       if (result) {
         setUser(result.user);
         setNeedsAuth(false);
+        if (onGoogleLoginSuccess && userRole !== 'admin') {
+          const clientProfile: AppUserProfile = {
+            uid: result.user.uid,
+            displayName: result.user.displayName || 'Клиент Лапа Помощи',
+            email: result.user.email || 'client.google@gmail.com',
+            photoURL:
+              result.user.photoURL ||
+              `data:image/svg+xml;utf8,${encodeURIComponent(
+                '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120"><rect width="120" height="120" rx="60" fill="#0D9488"/><text x="60" y="68" text-anchor="middle" font-family="Manrope, sans-serif" font-size="40" font-weight="800" fill="#FFFFFF">КЛ</text></svg>'
+              )}`,
+            role: 'user',
+            authSource: 'google',
+          };
+          saveUserProfile(clientProfile);
+          onGoogleLoginSuccess(clientProfile);
+        }
         await loadDriveFiles(searchQuery);
       }
     } catch (err: any) {

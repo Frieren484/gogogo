@@ -1,5 +1,13 @@
 import { CLINIC_INFO, AppointmentRecord } from '../data/clinicData';
 import { googleSignIn, logout as firebaseLogout } from './googleDriveAuth';
+import {
+  EmailNotificationLog,
+  getStoredEmailLogs,
+  sendRealEmailNotification,
+} from './emailService';
+
+export type { EmailNotificationLog };
+export { getStoredEmailLogs, sendRealEmailNotification };
 
 export type UserRole = 'user' | 'admin';
 
@@ -24,21 +32,8 @@ export interface RegisteredAccount {
   createdAt: string;
 }
 
-export interface EmailNotificationLog {
-  id: string;
-  sentAt: string;
-  appointmentId: string;
-  recipientEmail: string;
-  recipientName: string;
-  internalSenderEmail: string; // azazaza2092092@gmail.com
-  displaySenderEmail: string; // LapaPomochu@gmail.com (shown to client)
-  subject: string;
-  bodyText: string;
-}
-
 const USER_STORAGE_KEY = 'lapa_pomoshchi_active_user_v2';
 const REGISTERED_ACCOUNTS_KEY = 'lapa_pomoshchi_registered_users_v1';
-const EMAIL_LOGS_STORAGE_KEY = 'lapa_pomoshchi_email_logs_v1';
 
 function buildAvatarSvgDataUri(initials: string, bgHex: string): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120">
@@ -137,6 +132,37 @@ export function saveUserProfile(profile: AppUserProfile): void {
 }
 
 /**
+ * Строгая фильтрация записей (RBAC / Безопасность данных):
+ * - Администратор (role === 'admin' && login === '1') видит все записи клиники.
+ * - Неавторизованный гость (authSource === 'guest') не видит никаких чужих записей ([]).
+ * - Обычный клиент (role === 'user') видит ТОЛЬКО свои собственные записи,
+ *   отфильтрованные по его uid (ownerUid) или по его email.
+ */
+export function filterAppointmentsForUser(
+  appointments: AppointmentRecord[],
+  user?: AppUserProfile | null
+): AppointmentRecord[] {
+  if (!user || user.authSource === 'guest') {
+    return [];
+  }
+
+  if (user.role === 'admin' && user.login === '1') {
+    return appointments;
+  }
+
+  const normalizedUserEmail = user.email?.trim().toLowerCase() || '';
+
+  return appointments.filter((item) => {
+    const matchesUid = Boolean(item.ownerUid && item.ownerUid === user.uid);
+    const itemEmail = item.email?.trim().toLowerCase() || '';
+    const matchesEmail = Boolean(
+      normalizedUserEmail && itemEmail && itemEmail === normalizedUserEmail
+    );
+    return matchesUid || matchesEmail;
+  });
+}
+
+/**
  * Login with existing credentials:
  * - Admin login is strictly login === '1' and password === '1'
  * - Any other registered user gets strictly role === 'user'
@@ -174,7 +200,7 @@ export function authenticateWithCredentials(
     return {
       ok: false,
       error:
-        'Аккаунт с таким логином не найден. Проверьте логин или зарегистрируйтесь во вкладке «Регистрация».',
+        'Аккаунт с таким логином не найден. Проверьте логин или зарегистрируйтесь во вкладку «Регистрация».',
     };
   }
 
@@ -321,75 +347,74 @@ export async function signOutAccount(): Promise<AppUserProfile> {
   return GUEST_USER_PROFILE;
 }
 
-/**
- * Email Notification Service:
- * Uses internal clinic mailbox `azazaza2092092@gmail.com` as the underlying SMTP/account source,
- * while displaying `LapaPomochu@gmail.com` as the sender address to all recipients/clients.
- */
-export function getStoredEmailLogs(): EmailNotificationLog[] {
+export interface ClientPetProfile {
+  petName: string;
+  petSpecies: 'Кошка' | 'Собака' | 'Грызун';
+  breedAndAge: string;
+  weightKg: string;
+  chronicNotes: string;
+  lastVaccinationDate: string;
+  updatedAt: string;
+}
+
+const PET_PROFILES_STORAGE_KEY = 'lapa_pomoshchi_pet_profiles_v1';
+
+export function getClientPetProfile(
+  user?: AppUserProfile | null
+): ClientPetProfile | null {
+  if (!user || user.authSource === 'guest') return null;
   try {
-    const raw = window.localStorage.getItem(EMAIL_LOGS_STORAGE_KEY);
+    const raw = window.localStorage.getItem(PET_PROFILES_STORAGE_KEY);
     if (raw) {
-      return JSON.parse(raw);
+      const map = JSON.parse(raw) as Record<string, ClientPetProfile>;
+      const byUid = map[user.uid];
+      if (byUid) return byUid;
+      const emailKey = user.email?.trim().toLowerCase();
+      if (emailKey && map[emailKey]) return map[emailKey];
     }
   } catch {
-    // ignore
+    // ignore storage errors
   }
-  return [];
+
+  // Default pre-populated card for demo account Anna Sokolova
+  if (user.uid === 'user-account-anna' || user.login === 'anna') {
+    return {
+      petName: 'Персик',
+      petSpecies: 'Кошка',
+      breedAndAge: 'Британская короткошерстная, 3 года',
+      weightKg: '4.6',
+      chronicNotes: 'Чувствительное пищеварение, аллергии на антибиотики нет',
+      lastVaccinationDate: '2026-04-12',
+      updatedAt: '18.10.2026',
+    };
+  }
+
+  return null;
 }
 
-export function sendAppointmentEmailNotification(
-  record: AppointmentRecord
-): EmailNotificationLog {
-  const recipientEmail = record.email?.trim() || 'client@gmail.com';
-  const subject = `Талон записи #${record.id} — Ветеринарная клиника «Лапа Помощи»`;
-  const bodyText = [
-    `Здравствуйте, ${record.ownerName}!`,
-    ``,
-    `Ваша запись в круглосуточную ветеринарную клинику «Лапа Помощи» принята.`,
-    `• Номер талона: #${record.id}`,
-    `• Пациент: ${record.petSpecies} «${record.petName}»`,
-    `• Услуга: ${record.serviceTitle}`,
-    `• Специалист: ${record.doctorName}`,
-    `• Дата и время визита: ${record.preferredDate}`,
-    record.estimatedPrice
-      ? `• Предварительная стоимость: ${record.estimatedPrice.toLocaleString('ru-RU')} ₽`
-      : null,
-    `• Адрес клиники: ${CLINIC_INFO.address}`,
-    `• Круглосуточный телефон: ${CLINIC_INFO.phoneDisplay}`,
-    ``,
-    `С уважением,`,
-    `Ветеринарная клиника «Лапа Помощи»`,
-    `Отправитель: ${CLINIC_INFO.publicAliasEmail}`,
-  ]
-    .filter(Boolean)
-    .join('\n');
-
-  const logEntry: EmailNotificationLog = {
-    id: `MAIL-${Math.floor(10000 + Math.random() * 90000)}`,
-    sentAt: new Date().toLocaleString('ru-RU', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    }),
-    appointmentId: record.id,
-    recipientEmail,
-    recipientName: record.ownerName,
-    internalSenderEmail: CLINIC_INFO.internalSenderEmail, // azazaza2092092@gmail.com
-    displaySenderEmail: CLINIC_INFO.publicAliasEmail, // LapaPomochu@gmail.com
-    subject,
-    bodyText,
+export function saveClientPetProfile(
+  user: AppUserProfile,
+  profile: ClientPetProfile
+): ClientPetProfile {
+  const normalized: ClientPetProfile = {
+    ...profile,
+    petName: profile.petName.trim(),
+    breedAndAge: profile.breedAndAge.trim(),
+    weightKg: profile.weightKg.trim(),
+    chronicNotes: profile.chronicNotes.trim(),
+    updatedAt: new Date().toLocaleDateString('ru-RU'),
   };
-
   try {
-    const existing = getStoredEmailLogs();
-    const updated = [logEntry, ...existing].slice(0, 50);
-    window.localStorage.setItem(EMAIL_LOGS_STORAGE_KEY, JSON.stringify(updated));
+    const raw = window.localStorage.getItem(PET_PROFILES_STORAGE_KEY);
+    const map: Record<string, ClientPetProfile> = raw ? JSON.parse(raw) : {};
+    map[user.uid] = normalized;
+    if (user.email) {
+      map[user.email.trim().toLowerCase()] = normalized;
+    }
+    window.localStorage.setItem(PET_PROFILES_STORAGE_KEY, JSON.stringify(map));
   } catch {
-    // ignore
+    // ignore storage errors
   }
-
-  return logEntry;
+  return normalized;
 }
+

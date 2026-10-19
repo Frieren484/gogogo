@@ -1,7 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
+  Eye,
+  EyeOff,
   KeyRound,
   Lock,
   LogIn,
@@ -24,6 +26,7 @@ interface AuthModalProps {
   currentUser: AppUserProfile;
   onUserChanged: (user: AppUserProfile) => void;
   initialMode?: 'login' | 'register';
+  authReasonMessage?: string;
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({
@@ -32,22 +35,32 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   currentUser,
   onUserChanged,
   initialMode = 'login',
+  authReasonMessage,
 }) => {
   const [activeTab, setActiveTab] = useState<'login' | 'register'>(initialMode);
   const [loginValue, setLoginValue] = useState('');
   const [passwordValue, setPasswordValue] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [isLoadingGoogle, setIsLoadingGoogle] = useState(false);
+  const closeTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (isOpen) {
       setActiveTab(initialMode);
       setLoginValue('');
       setPasswordValue('');
+      setShowPassword(false);
       setErrorMessage('');
       setSuccessMessage('');
     }
+    return () => {
+      if (closeTimerRef.current !== null) {
+        window.clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = null;
+      }
+    };
   }, [isOpen, initialMode]);
 
   if (!isOpen) return null;
@@ -72,7 +85,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
       onUserChanged(result.user);
       onClose();
-      if (result.user.role === 'admin') {
+      if (result.user.role === 'admin' && !authReasonMessage) {
         window.setTimeout(() => {
           document.getElementById('admin-panel')?.scrollIntoView({ behavior: 'smooth' });
         }, 100);
@@ -85,14 +98,18 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       }
 
       onUserChanged(result.user);
+      if (authReasonMessage) {
+        onClose();
+        return;
+      }
       setSuccessMessage(
         `Аккаунт «${result.user.login}» успешно зарегистрирован! Вы вошли с правами Пользователя (Клиента).`
       );
       setLoginValue('');
       setPasswordValue('');
-      window.setTimeout(() => {
+      closeTimerRef.current = window.setTimeout(() => {
         onClose();
-      }, 900);
+      }, 700);
     }
   };
 
@@ -149,6 +166,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         </div>
 
         <div className="p-6 space-y-5">
+          {authReasonMessage && (
+            <div className="rounded-xl bg-[#FFF7ED] border border-[#F97316]/50 p-3.5 flex items-start gap-2.5 text-xs font-semibold text-[#9A3412]">
+              <AlertCircle className="w-4 h-4 text-[#F97316] shrink-0 mt-0.5" />
+              <span>{authReasonMessage}</span>
+            </div>
+          )}
+
           {/* Active Session Banner */}
           <div className="rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] p-3.5 flex items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
@@ -270,7 +294,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <Lock className="w-4 h-4 text-[#335249] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input
                   id="auth-password-input"
-                  type="password"
+                  type={showPassword ? 'text' : 'password'}
                   value={passwordValue}
                   onChange={(e) => setPasswordValue(e.target.value)}
                   placeholder={
@@ -279,8 +303,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   autoComplete={
                     activeTab === 'login' ? 'current-password' : 'new-password'
                   }
-                  className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] text-sm text-[#0F2922] placeholder:text-[#335249]/60 focus:outline-none focus:border-[#0D9488] focus:bg-white transition-snappy"
+                  className="w-full pl-10 pr-10 py-2.5 rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] text-sm text-[#0F2922] placeholder:text-[#335249]/60 focus:outline-none focus:border-[#0D9488] focus:bg-white transition-snappy"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  aria-label={showPassword ? 'Скрыть пароль' : 'Показать пароль'}
+                  className="w-8 h-8 rounded-lg flex items-center justify-center text-[#335249] hover:text-[#0F2922] absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer"
+                >
+                  {showPassword ? (
+                    <EyeOff className="w-4 h-4" />
+                  ) : (
+                    <Eye className="w-4 h-4" />
+                  )}
+                </button>
               </div>
             </div>
 

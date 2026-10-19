@@ -3,13 +3,16 @@ import {
   CheckCircle2,
   Download,
   Edit3,
+  ExternalLink,
   FileJson,
   FileSpreadsheet,
+  KeyRound,
   Mail,
   Plus,
   RotateCcw,
   Save,
   Search,
+  Send,
   Shield,
   Stethoscope,
   Trash2,
@@ -28,9 +31,14 @@ import {
   SERVICES_DATA,
 } from '../data/clinicData';
 import {
+  buildGmailDirectComposeUrl,
+  getRuntimeEmailJSKeys,
   getStoredEmailLogs,
-  sendAppointmentEmailNotification,
-} from '../services/authService';
+  RuntimeEmailJSKeys,
+  saveRuntimeEmailJSKeys,
+  sendRealEmailNotification,
+  sendTestEmailToAddress,
+} from '../services/emailService';
 import { uploadFileToGoogleDrive } from '../services/googleDriveAuth';
 
 interface AdminDashboardProps {
@@ -40,6 +48,7 @@ interface AdminDashboardProps {
   onUpdateServices: (next: ServiceItem[]) => void;
   doctors: DoctorProfile[];
   onUpdateDoctors: (next: DoctorProfile[]) => void;
+  onShowToast?: (message: string) => void;
 }
 
 const STATUS_OPTIONS: AppointmentStatus[] = [
@@ -56,12 +65,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onUpdateServices,
   doctors,
   onUpdateDoctors,
+  onShowToast,
 }) => {
   const [activeTab, setActiveTab] = useState<
     'appointments' | 'services' | 'doctors' | 'emails'
   >('appointments');
 
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [doctorFilter, setDoctorFilter] = useState<string>('all');
+  const [dateFilter, setDateFilter] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [bannerMessage, setBannerMessage] = useState<string>('');
   const [isUploadingDrive, setIsUploadingDrive] = useState<boolean>(false);
@@ -82,12 +94,54 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [emailLogsVersion, setEmailLogsVersion] = useState<number>(0);
   const emailLogs = useMemo(() => getStoredEmailLogs(), [emailLogsVersion, appointments]);
 
+  // Email Gateway Test & Runtime EmailJS Configuration State
+  const [testTargetEmail, setTestTargetEmail] = useState<string>('tanks8015@gmail.com');
+  const [isSendingTestEmail, setIsSendingTestEmail] = useState<boolean>(false);
+  const [emailJsKeys, setEmailJsKeys] = useState<RuntimeEmailJSKeys>(() =>
+    getRuntimeEmailJSKeys()
+  );
+  const [showEmailJsConfig, setShowEmailJsConfig] = useState<boolean>(false);
+
+  const handleSendTestEmail = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const target = testTargetEmail.trim() || 'tanks8015@gmail.com';
+    setIsSendingTestEmail(true);
+    try {
+      const result = await sendTestEmailToAddress(target);
+      setEmailLogsVersion((v) => v + 1);
+      showNotice(result.toastMessage);
+      if (onShowToast) {
+        onShowToast(result.toastMessage);
+      }
+    } finally {
+      setIsSendingTestEmail(false);
+    }
+  };
+
+  const handleSaveEmailJsKeys = (e: React.FormEvent) => {
+    e.preventDefault();
+    saveRuntimeEmailJSKeys(emailJsKeys);
+    const msg = 'Ключи EmailJS (Service ID, Template ID, Public Key) сохранены для отправки писем!';
+    showNotice(msg);
+    if (onShowToast) {
+      onShowToast(msg);
+    }
+    setShowEmailJsConfig(false);
+  };
+
   const filteredAppointments = useMemo(() => {
     return appointments.filter((item) => {
       const matchesStatus =
         statusFilter === 'all' || item.status === statusFilter;
+      const matchesDoctor =
+        doctorFilter === 'all' || item.doctorName === doctorFilter;
+      const matchesDate =
+        !dateFilter || item.preferredDate.startsWith(dateFilter);
+
+      if (!matchesStatus || !matchesDoctor || !matchesDate) return false;
+
       const q = searchQuery.trim().toLowerCase();
-      if (!q) return matchesStatus;
+      if (!q) return true;
       const hay = [
         item.id,
         item.ownerName,
@@ -98,12 +152,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         item.serviceTitle,
         item.doctorName,
         item.notes || '',
+        item.doctorRecommendation || '',
       ]
         .join(' ')
         .toLowerCase();
-      return matchesStatus && hay.includes(q);
+      return hay.includes(q);
     });
-  }, [appointments, statusFilter, searchQuery]);
+  }, [appointments, statusFilter, doctorFilter, dateFilter, searchQuery]);
 
   const stats = useMemo(() => {
     const total = appointments.length;
@@ -114,7 +169,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     const revenue = appointments
       .filter((a) => a.status !== 'Отменена')
       .reduce((acc, item) => acc + (item.estimatedPrice || 0), 0);
-    return { total, newCount, confirmedCount, revenue };
+    const catsCount = appointments.filter((a) => a.petSpecies === 'Кошка').length;
+    const dogsCount = appointments.filter((a) => a.petSpecies === 'Собака').length;
+    const rodentsCount = appointments.filter((a) => a.petSpecies === 'Грызун').length;
+    return {
+      total,
+      newCount,
+      confirmedCount,
+      revenue,
+      catsCount,
+      dogsCount,
+      rodentsCount,
+    };
   }, [appointments]);
 
   const showNotice = (msg: string) => {
@@ -126,11 +192,29 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // --- CRUD: Appointments ---
   const handleStatusChange = (id: string, nextStatus: string) => {
+    const target = appointments.find((item) => item.id === id);
     const updated = appointments.map((item) =>
       item.id === id ? { ...item, status: nextStatus } : item
     );
     onUpdateAppointments(updated);
-    showNotice(`Статус заявки #${id} изменен на «${nextStatus}».`);
+
+    if (target) {
+      const updatedRecord: AppointmentRecord = {
+        ...target,
+        status: nextStatus,
+      };
+      void sendRealEmailNotification(updatedRecord, 'status_updated').then(
+        (result) => {
+          setEmailLogsVersion((v) => v + 1);
+          showNotice(result.toastMessage);
+          if (onShowToast) {
+            onShowToast(result.toastMessage);
+          }
+        }
+      );
+    } else {
+      showNotice(`Статус заявки #${id} изменен на «${nextStatus}».`);
+    }
   };
 
   const handleDeleteAppointment = (id: string) => {
@@ -142,20 +226,60 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     e.preventDefault();
     if (!editingAppointment) return;
 
+    const cleanOwner = editingAppointment.ownerName.trim();
+    const cleanPet = editingAppointment.petName.trim();
+    const cleanService = editingAppointment.serviceTitle.trim();
+
+    if (!cleanOwner || !cleanPet || !cleanService) {
+      showNotice('Пожалуйста, заполните обязательные поля: владелец, кличка и услуга.');
+      return;
+    }
+
+    const sanitizedAppointment: AppointmentRecord = {
+      ...editingAppointment,
+      ownerName: cleanOwner,
+      petName: cleanPet,
+      serviceTitle: cleanService,
+      estimatedPrice: Math.max(0, Number(editingAppointment.estimatedPrice) || 0),
+    };
+
     if (isNewAppointment) {
-      const sentLog = sendAppointmentEmailNotification(editingAppointment);
-      setEmailLogsVersion((v) => v + 1);
-      onUpdateAppointments([editingAppointment, ...appointments]);
-      showNotice(
-        `Создана заявка #${editingAppointment.id}. Уведомление отправлено с ${sentLog.displaySenderEmail} на ${sentLog.recipientEmail}.`
+      onUpdateAppointments([sanitizedAppointment, ...appointments]);
+      void sendRealEmailNotification(sanitizedAppointment, 'created').then(
+        (result) => {
+          setEmailLogsVersion((v) => v + 1);
+          showNotice(result.toastMessage);
+          if (onShowToast) {
+            onShowToast(result.toastMessage);
+          }
+        }
       );
     } else {
+      const previous = appointments.find((a) => a.id === sanitizedAppointment.id);
       onUpdateAppointments(
         appointments.map((item) =>
-          item.id === editingAppointment.id ? editingAppointment : item
+          item.id === sanitizedAppointment.id ? sanitizedAppointment : item
         )
       );
-      showNotice(`Заявка #${editingAppointment.id} успешно обновлена.`);
+      if (
+        previous &&
+        (previous.status !== sanitizedAppointment.status ||
+          (previous.doctorRecommendation || '') !==
+            (sanitizedAppointment.doctorRecommendation || ''))
+      ) {
+        void sendRealEmailNotification(
+          sanitizedAppointment,
+          'status_updated'
+        ).then((result) => {
+          setEmailLogsVersion((v) => v + 1);
+          showNotice(result.toastMessage);
+          if (onShowToast) {
+            onShowToast(result.toastMessage);
+          }
+        });
+      } else {
+        showNotice(`Заявка #${sanitizedAppointment.id} успешно обновлена.`);
+      }
     }
     setEditingAppointment(null);
     setIsNewAppointment(false);
@@ -189,6 +313,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     e.preventDefault();
     if (!editingService) return;
 
+    const cleanTitle = editingService.title.trim();
+    const cleanDescription = editingService.description.trim();
+    if (!cleanTitle || !cleanDescription) {
+      showNotice('Пожалуйста, укажите название и описание услуги.');
+      return;
+    }
+
     const categoryMap: Record<ServiceItem['category'], string> = {
       diagnostics: 'Диагностика',
       treatment: 'Лечение',
@@ -196,6 +327,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     };
     const normalized: ServiceItem = {
       ...editingService,
+      title: cleanTitle,
+      description: cleanDescription,
+      priceFrom: Math.max(0, Number(editingService.priceFrom) || 0),
       categoryLabel: categoryMap[editingService.category] || 'Лечение',
     };
 
@@ -224,15 +358,29 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     e.preventDefault();
     if (!editingDoctor) return;
 
+    const cleanName = editingDoctor.name.trim();
+    const cleanRole = editingDoctor.role.trim();
+    if (!cleanName || !cleanRole) {
+      showNotice('Пожалуйста, заполните ФИО и специализацию врача.');
+      return;
+    }
+
+    const sanitizedDoctor: DoctorProfile = {
+      ...editingDoctor,
+      name: cleanName,
+      role: cleanRole,
+      experienceYears: Math.max(1, Number(editingDoctor.experienceYears) || 1),
+    };
+
     if (isNewDoctor) {
-      onUpdateDoctors([...doctors, editingDoctor]);
-      showNotice(`Добавлен специалист «${editingDoctor.name}».`);
+      onUpdateDoctors([...doctors, sanitizedDoctor]);
+      showNotice(`Добавлен специалист «${sanitizedDoctor.name}».`);
     } else {
       onUpdateDoctors(
-        doctors.map((d) => (d.id === editingDoctor.id ? editingDoctor : d))
+        doctors.map((d) => (d.id === sanitizedDoctor.id ? sanitizedDoctor : d))
       );
       showNotice(
-        `Карточка врача «${editingDoctor.name}» обновлена на главной странице.`
+        `Карточка врача «${sanitizedDoctor.name}» обновлена на главной странице.`
       );
     }
     setEditingDoctor(null);
@@ -549,6 +697,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           {/* TAB 1: APPOINTMENTS CRUD */}
           {activeTab === 'appointments' && (
             <div className="p-6 space-y-5">
+              {/* Patient Species & Doctor Load Analytics Strip */}
+              <div className="rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="font-bold text-[#0F2922]">
+                    Аналитика пациентов:
+                  </span>
+                  <span className="px-2.5 py-1 rounded-lg bg-white border border-[#D1EAE4] font-semibold text-[#0F2922] tabular-nums">
+                    Кошки: {stats.catsCount}
+                  </span>
+                  <span className="px-2.5 py-1 rounded-lg bg-white border border-[#D1EAE4] font-semibold text-[#0F2922] tabular-nums">
+                    Собаки: {stats.dogsCount}
+                  </span>
+                  <span className="px-2.5 py-1 rounded-lg bg-white border border-[#D1EAE4] font-semibold text-[#0F2922] tabular-nums">
+                    Грызуны: {stats.rodentsCount}
+                  </span>
+                </div>
+                <div className="text-[#335249] tabular-nums">
+                  Отображено записей по фильтрам:{' '}
+                  <strong className="text-[#0D9488]">
+                    {filteredAppointments.length} из {appointments.length}
+                  </strong>
+                </div>
+              </div>
+
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="relative">
@@ -558,8 +730,45 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       placeholder="Поиск по клиенту, телефону, кличке..."
-                      className="pl-9 pr-4 py-2 text-xs sm:text-sm rounded-xl border border-[#D1EAE4] bg-[#F4FAF8] text-[#0F2922] focus:outline-none focus:border-[#0D9488] w-64 sm:w-72"
+                      className="pl-9 pr-4 py-2 text-xs sm:text-sm rounded-xl border border-[#D1EAE4] bg-[#F4FAF8] text-[#0F2922] focus:outline-none focus:border-[#0D9488] w-60 sm:w-64"
                     />
+                  </div>
+
+                  {/* Фильтр по врачу */}
+                  <select
+                    value={doctorFilter}
+                    onChange={(e) => setDoctorFilter(e.target.value)}
+                    aria-label="Фильтр по врачу"
+                    className="px-3 py-2 text-xs rounded-xl border border-[#D1EAE4] bg-[#F4FAF8] text-[#0F2922] font-semibold focus:outline-none focus:border-[#0D9488]"
+                  >
+                    <option value="all">Все врачи клиники</option>
+                    <option value="Дежурный специалист клиники">Дежурный специалист</option>
+                    {doctors.map((d) => (
+                      <option key={d.id} value={d.name}>
+                        {d.name}
+                      </option>
+                    ))}
+                  </select>
+
+                  {/* Фильтр по дате */}
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="date"
+                      value={dateFilter}
+                      onChange={(e) => setDateFilter(e.target.value)}
+                      aria-label="Фильтр по дате приема"
+                      className="px-3 py-1.5 text-xs rounded-xl border border-[#D1EAE4] bg-[#F4FAF8] text-[#0F2922] tabular-nums focus:outline-none focus:border-[#0D9488]"
+                    />
+                    {dateFilter && (
+                      <button
+                        type="button"
+                        onClick={() => setDateFilter('')}
+                        className="px-2 py-1.5 rounded-lg bg-[#E6F4F1] text-[#0D9488] text-[11px] font-bold cursor-pointer"
+                        title="Сбросить дату"
+                      >
+                        Все даты
+                      </button>
+                    )}
                   </div>
 
                   <div className="inline-flex flex-wrap items-center gap-1 p-1 bg-[#F4FAF8] border border-[#D1EAE4] rounded-xl">
@@ -672,7 +881,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         </td>
 
                         <td className="py-3.5 px-4 align-top max-w-xs text-[#335249]">
-                          {item.notes || '—'}
+                          <div>{item.notes || '—'}</div>
+                          {item.doctorRecommendation && (
+                            <div className="mt-1.5 px-2.5 py-1.5 rounded-lg bg-[#E6F4F1] border border-[#0D9488]/30 text-[11px] text-[#0F2922]">
+                              <strong className="text-[#0D9488]">Заключение врача:</strong>{' '}
+                              {item.doctorRecommendation}
+                            </div>
+                          )}
                         </td>
 
                         <td className="py-3.5 px-4 align-top text-right whitespace-nowrap">
@@ -909,23 +1124,151 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           {/* TAB 4: EMAIL NOTIFICATIONS LOG & ALIAS ROUTING */}
           {activeTab === 'emails' && (
             <div className="p-6 space-y-5">
-              <div className="rounded-xl bg-[#E6F4F1] border border-[#0D9488] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
-                  <h3 className="text-sm font-bold text-[#0F2922]">
-                    Активная маскировка почты клиники (Alias Routing)
-                  </h3>
-                  <p className="text-xs text-[#335249] mt-0.5">
-                    Реальная учетная запись отправителя:{' '}
-                    <strong className="text-[#0F2922]">{CLINIC_INFO.internalSenderEmail}</strong>{' '}
-                    → Отображаемый адрес в уведомлениях у клиентов:{' '}
-                    <strong className="text-[#0D9488]">{CLINIC_INFO.publicAliasEmail}</strong>
-                  </p>
+              {/* Top Info & Direct Test Dispatch to tanks8015@gmail.com */}
+              <div className="rounded-xl bg-[#E6F4F1] border border-[#0D9488] p-5 space-y-4">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-sm font-bold text-[#0F2922]">
+                      Почтовый шлюз клиники «Лапа Помощи» (EmailJS REST API + FormSubmit Relay)
+                    </h3>
+                    <p className="text-xs text-[#335249] mt-0.5">
+                      Внутренний аккаунт клиники:{' '}
+                      <strong className="text-[#0F2922]">{CLINIC_INFO.internalSenderEmail}</strong>{' '}
+                      → Отображаемый отправитель (Alias):{' '}
+                      <strong className="text-[#0D9488]">{CLINIC_INFO.publicAliasEmail}</strong>
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowEmailJsConfig((prev) => !prev)}
+                    className="py-2 px-3.5 rounded-xl bg-white hover:bg-[#F4FAF8] border border-[#0D9488] text-xs font-bold text-[#0F2922] inline-flex items-center gap-1.5 whitespace-nowrap self-start cursor-pointer"
+                  >
+                    <KeyRound className="w-3.5 h-3.5 text-[#0D9488]" />
+                    <span>
+                      {showEmailJsConfig ? 'Скрыть ключи EmailJS' : 'Настроить ключи EmailJS'}
+                    </span>
+                  </button>
                 </div>
+
+                {/* Live Test Dispatch Form pre-filled with tanks8015@gmail.com */}
+                <form
+                  onSubmit={handleSendTestEmail}
+                  className="bg-white rounded-xl border border-[#D1EAE4] p-4 flex flex-col sm:flex-row sm:items-end justify-between gap-3"
+                >
+                  <div className="flex-1">
+                    <label className="block text-xs font-bold text-[#0F2922] mb-1">
+                      Проверка отправки реального письма с почты клиники на указанный адрес:
+                    </label>
+                    <input
+                      type="email"
+                      required
+                      value={testTargetEmail}
+                      onChange={(e) => setTestTargetEmail(e.target.value)}
+                      placeholder="tanks8015@gmail.com"
+                      className="w-full px-3.5 py-2 text-xs sm:text-sm rounded-lg border border-[#D1EAE4] bg-[#F4FAF8] text-[#0F2922] focus:outline-none focus:border-[#0D9488]"
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <button
+                      type="submit"
+                      disabled={isSendingTestEmail}
+                      className="py-2.5 px-4 rounded-xl bg-[#F97316] hover:bg-[#EA580C] disabled:opacity-60 text-white text-xs font-bold transition-snappy inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      <span>
+                        {isSendingTestEmail
+                          ? 'Отправка письма...'
+                          : `Отправить на ${testTargetEmail || 'tanks8015@gmail.com'}`}
+                      </span>
+                    </button>
+
+                    <a
+                      href={buildGmailDirectComposeUrl(
+                        testTargetEmail.trim() || 'tanks8015@gmail.com',
+                        'Тестовое уведомление — Ветеринарная клиника «Лапа Помощи»',
+                        `Здравствуйте!\n\nЭто контрольное письмо от круглосуточной ветеринарной клиники «Лапа Помощи».\nОтправитель: ${CLINIC_INFO.publicAliasEmail} (шлюз ${CLINIC_INFO.internalSenderEmail})\nПолучатель: ${testTargetEmail.trim() || 'tanks8015@gmail.com'}\nТелефон клиники 24/7: ${CLINIC_INFO.phoneDisplay}`
+                      )}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="py-2.5 px-3.5 rounded-xl bg-[#F4FAF8] hover:bg-[#E6F4F1] border border-[#D1EAE4] text-xs font-semibold text-[#0F2922] transition-snappy inline-flex items-center gap-1.5 whitespace-nowrap"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5 text-[#0D9488]" />
+                      <span>Отправить через Gmail Web</span>
+                    </a>
+                  </div>
+                </form>
+
+                {/* Collapsible Runtime EmailJS Credentials Editor */}
+                {showEmailJsConfig && (
+                  <form
+                    onSubmit={handleSaveEmailJsKeys}
+                    className="bg-white rounded-xl border border-[#D1EAE4] p-4 space-y-3"
+                  >
+                    <div className="text-xs font-bold text-[#0F2922]">
+                      Ключи EmailJS REST API (сохраняются в браузере или задаются в src/services/emailService.ts)
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-[#335249] mb-1">
+                          Service ID
+                        </label>
+                        <input
+                          type="text"
+                          value={emailJsKeys.serviceId}
+                          onChange={(e) =>
+                            setEmailJsKeys({ ...emailJsKeys, serviceId: e.target.value })
+                          }
+                          placeholder="service_xxxxxxx"
+                          className="w-full px-3 py-1.5 text-xs rounded-lg border border-[#D1EAE4]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-[#335249] mb-1">
+                          Template ID
+                        </label>
+                        <input
+                          type="text"
+                          value={emailJsKeys.templateId}
+                          onChange={(e) =>
+                            setEmailJsKeys({ ...emailJsKeys, templateId: e.target.value })
+                          }
+                          placeholder="template_xxxxxxx"
+                          className="w-full px-3 py-1.5 text-xs rounded-lg border border-[#D1EAE4]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-[#335249] mb-1">
+                          Public Key (User ID)
+                        </label>
+                        <input
+                          type="text"
+                          value={emailJsKeys.publicKey}
+                          onChange={(e) =>
+                            setEmailJsKeys({ ...emailJsKeys, publicKey: e.target.value })
+                          }
+                          placeholder="YOUR_PUBLIC_KEY"
+                          className="w-full px-3 py-1.5 text-xs rounded-lg border border-[#D1EAE4]"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex justify-end">
+                      <button
+                        type="submit"
+                        className="py-2 px-4 rounded-xl bg-[#0D9488] hover:bg-[#0F766E] text-white text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Save className="w-3.5 h-3.5" />
+                        <span>Сохранить ключи EmailJS</span>
+                      </button>
+                    </div>
+                  </form>
+                )}
               </div>
 
               {emailLogs.length === 0 ? (
                 <div className="py-8 text-center rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] text-xs text-[#335249]">
-                  Журнал отправленных уведомлений пока пуст. Оформите любую запись на приём, чтобы увидеть отправленное письмо.
+                  Журнал отправленных уведомлений пока пуст. Нажмите «Отправить на tanks8015@gmail.com» выше или оформите запись на приём.
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -935,33 +1278,63 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       className="rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] p-4 space-y-2"
                     >
                       <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                        <span className="font-bold text-[#0F2922]">
-                          {log.subject}
-                        </span>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-bold text-[#0F2922]">
+                            {log.subject}
+                          </span>
+                          <span className="px-2 py-0.5 rounded-md bg-[#E6F4F1] text-[#0D9488] font-semibold text-[11px]">
+                            {log.deliveryStatus === 'sent_emailjs'
+                              ? 'EmailJS API (200 OK)'
+                              : log.deliveryStatus === 'sent_relay'
+                                ? 'HTTP Relay (FormSubmit)'
+                                : 'Зафиксировано в шлюзе'}
+                          </span>
+                        </div>
                         <span className="text-[#335249] tabular-nums">{log.sentAt}</span>
                       </div>
-                      <div className="text-xs text-[#335249] flex flex-wrap items-center gap-x-3 gap-y-1">
-                        <span>
-                          Шлюз:{' '}
-                          <strong className="text-[#0F2922]">
-                            {log.internalSenderEmail}
-                          </strong>
-                        </span>
-                        <span aria-hidden="true">·</span>
-                        <span>
-                          Отображено клиенту:{' '}
-                          <strong className="text-[#0D9488]">
-                            {log.displaySenderEmail}
-                          </strong>
-                        </span>
-                        <span aria-hidden="true">·</span>
-                        <span>
-                          Получатель:{' '}
-                          <strong className="text-[#0F2922]">
-                            {log.recipientName} ({log.recipientEmail})
-                          </strong>
-                        </span>
+                      <div className="text-xs text-[#335249] flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                          <span>
+                            Шлюз:{' '}
+                            <strong className="text-[#0F2922]">
+                              {log.internalSenderEmail}
+                            </strong>
+                          </span>
+                          <span aria-hidden="true">·</span>
+                          <span>
+                            Отображено клиенту:{' '}
+                            <strong className="text-[#0D9488]">
+                              {log.displaySenderEmail}
+                            </strong>
+                          </span>
+                          <span aria-hidden="true">·</span>
+                          <span>
+                            Получатель:{' '}
+                            <strong className="text-[#0F2922]">
+                              {log.recipientName} ({log.recipientEmail})
+                            </strong>
+                          </span>
+                        </div>
+
+                        <a
+                          href={buildGmailDirectComposeUrl(
+                            log.recipientEmail,
+                            log.subject,
+                            log.bodyText
+                          )}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[11px] font-semibold text-[#0D9488] hover:underline inline-flex items-center gap-1"
+                        >
+                          <ExternalLink className="w-3 h-3" />
+                          <span>Открыть в Gmail</span>
+                        </a>
                       </div>
+                      {log.deliveryNote && (
+                        <div className="text-[11px] text-[#0D9488] font-medium">
+                          Статус канала: {log.deliveryNote}
+                        </div>
+                      )}
                       <pre className="text-[11px] text-[#335249] bg-white p-3 rounded-lg border border-[#D1EAE4] whitespace-pre-wrap font-sans">
                         {log.bodyText}
                       </pre>
@@ -1204,6 +1577,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   })
                 }
                 className="w-full px-3 py-2 text-xs rounded-lg border border-[#D1EAE4]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-[#0D9488] mb-1">
+                Заключение и рекомендации лечащего врача (отображается клиенту в «Моих заявках» и в талоне)
+              </label>
+              <textarea
+                rows={2}
+                placeholder="Например: По результатам УЗИ патологий не выявлено. Рекомендована лечебная диета Gastrointestinal на 14 дней."
+                value={editingAppointment.doctorRecommendation || ''}
+                onChange={(e) =>
+                  setEditingAppointment({
+                    ...editingAppointment,
+                    doctorRecommendation: e.target.value,
+                  })
+                }
+                className="w-full px-3 py-2 text-xs rounded-lg border border-[#0D9488]/50 bg-[#F4FAF8]"
               />
             </div>
 

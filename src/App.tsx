@@ -49,9 +49,11 @@ import { AuthModal } from './components/AuthModal';
 import { AdminDashboard } from './components/AdminDashboard';
 import {
   AppUserProfile,
+  filterAppointmentsForUser,
   getStoredUserProfile,
   signOutAccount,
 } from './services/authService';
+import { ensureInitialTestEmailSentToTanks8015 } from './services/emailService';
 
 const STORAGE_KEY = 'lapa_pomoshchi_appointments_v2';
 const SERVICES_STORAGE_KEY = 'lapa_pomoshchi_services_v1';
@@ -69,8 +71,14 @@ export default function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [bookingModalOpen, setBookingModalOpen] = useState(false);
   const [bookingPrefill, setBookingPrefill] = useState<BookingPrefill | null>(null);
+  const [pendingBookingForAuth, setPendingBookingForAuth] = useState<{
+    pending: boolean;
+    prefill: BookingPrefill | null;
+  }>({ pending: false, prefill: null });
+  const [pendingSavedModalForAuth, setPendingSavedModalForAuth] = useState(false);
   const [emergencyModalOpen, setEmergencyModalOpen] = useState(false);
   const [savedModalOpen, setSavedModalOpen] = useState(false);
+  const [toastNotice, setToastNotice] = useState<string>('');
 
   // Appointments persisted in localStorage (pre-populated with 6 realistic records if empty)
   const [appointments, setAppointments] = useState<AppointmentRecord[]>(() => {
@@ -140,14 +148,70 @@ export default function App() {
     }
   }, [doctors]);
 
-  const openAuthModal = (mode: 'login' | 'register') => {
+  const showToastNotice = (message: string) => {
+    setToastNotice(message);
+    window.setTimeout(() => {
+      setToastNotice((current) => (current === message ? '' : current));
+    }, 6000);
+  };
+
+  // Автоматическая тестовая отправка письма с почты клиники на tanks8015@gmail.com при запуске
+  useEffect(() => {
+    void ensureInitialTestEmailSentToTanks8015().then((result) => {
+      if (result) {
+        showToastNotice(result.toastMessage);
+      }
+    });
+  }, []);
+
+  // Строгая RBAC-фильтрация записей для текущего пользователя
+  const userVisibleAppointments = useMemo(
+    () => filterAppointmentsForUser(appointments, currentUser),
+    [appointments, currentUser]
+  );
+
+  const openAuthModal = (
+    mode: 'login' | 'register',
+    keepPendingActions = false
+  ) => {
+    if (!keepPendingActions) {
+      setPendingBookingForAuth({ pending: false, prefill: null });
+      setPendingSavedModalForAuth(false);
+    }
     setAuthModalMode(mode);
     setAuthModalOpen(true);
+  };
+
+  const handleUserChanged = (nextUser: AppUserProfile) => {
+    setCurrentUser(nextUser);
+    if (nextUser.authSource !== 'guest') {
+      if (pendingBookingForAuth.pending) {
+        const savedPrefill = pendingBookingForAuth.prefill;
+        setPendingBookingForAuth({ pending: false, prefill: null });
+        setBookingPrefill(savedPrefill);
+        setBookingModalOpen(true);
+      } else if (pendingSavedModalForAuth) {
+        setPendingSavedModalForAuth(false);
+        setSavedModalOpen(true);
+      }
+    }
   };
 
   const handleLogoutClick = async () => {
     const guest = await signOutAccount();
     setCurrentUser(guest);
+    setPendingBookingForAuth({ pending: false, prefill: null });
+    setPendingSavedModalForAuth(false);
+  };
+
+  const openSavedAppointments = () => {
+    setMobileMenuOpen(false);
+    if (currentUser.authSource === 'guest') {
+      setPendingSavedModalForAuth(true);
+      openAuthModal('login', true);
+      return;
+    }
+    setSavedModalOpen(true);
   };
 
   // Services Filter State
@@ -198,9 +262,14 @@ export default function App() {
 
   // Handlers
   const openGeneralBooking = (prefill?: BookingPrefill) => {
+    setMobileMenuOpen(false);
+    if (currentUser.authSource === 'guest') {
+      setPendingBookingForAuth({ pending: true, prefill: prefill || null });
+      openAuthModal('register', true);
+      return;
+    }
     setBookingPrefill(prefill || null);
     setBookingModalOpen(true);
-    setMobileMenuOpen(false);
   };
 
   const handleBookingCreated = (newRecord: AppointmentRecord) => {
@@ -350,13 +419,10 @@ export default function App() {
               </a>
               <button
                 type="button"
-                onClick={() => {
-                  setMobileMenuOpen(false);
-                  setSavedModalOpen(true);
-                }}
+                onClick={openSavedAppointments}
                 className="font-semibold text-[#0D9488] underline underline-offset-4"
               >
-                Мои заявки ({appointments.length})
+                Мои заявки ({userVisibleAppointments.length})
               </button>
             </div>
           </div>
@@ -431,11 +497,11 @@ export default function App() {
 
                 <button
                   type="button"
-                  onClick={() => setSavedModalOpen(true)}
+                  onClick={openSavedAppointments}
                   className="inline-flex items-center gap-1.5 py-1.5 px-3 rounded-xl bg-[#E6F4F1] hover:bg-[#D1EAE4] text-[#0F2922] font-semibold text-xs transition-snappy whitespace-nowrap shrink-0 cursor-pointer tabular-nums"
                 >
                   <CalendarCheck className="w-3.5 h-3.5 text-[#0D9488]" />
-                  <span>Мои заявки ({appointments.length})</span>
+                  <span>Мои заявки ({userVisibleAppointments.length})</span>
                 </button>
               </div>
             </div>
@@ -606,6 +672,7 @@ export default function App() {
             onUpdateServices={setServices}
             doctors={doctors}
             onUpdateDoctors={setDoctors}
+            onShowToast={showToastNotice}
           />
         )}
 
@@ -980,12 +1047,15 @@ export default function App() {
           </div>
         </section>
 
-        {/* Google Drive Cloud Medical Card Integration */}
-        <GoogleDriveSection
-          appointments={appointments}
-          calculatorSummaryText={`Питомец: ${PET_TYPES_CONFIG[calcPetType].label} (${PET_AGE_CONFIG[calcPetAge].label})\nПрограмма: ${selectedPackage.title}\nИтоговая расчетная стоимость: ${calculationBreakdown.total.toLocaleString('ru-RU')} ₽`}
-          userRole={currentUser.role}
-        />
+        {/* Google Drive Cloud Medical Card Integration (Visible strictly to Administrator) */}
+        {currentUser.role === 'admin' && currentUser.login === '1' && (
+          <GoogleDriveSection
+            appointments={appointments}
+            calculatorSummaryText={`Питомец: ${PET_TYPES_CONFIG[calcPetType].label} (${PET_AGE_CONFIG[calcPetAge].label})\nПрограмма: ${selectedPackage.title}\nИтоговая расчетная стоимость: ${calculationBreakdown.total.toLocaleString('ru-RU')} ₽`}
+            userRole={currentUser.role}
+            onGoogleLoginSuccess={handleUserChanged}
+          />
+        )}
 
         {/* Doctors Team Section */}
         <section id="doctors" className="py-16 lg:py-24 bg-white">
@@ -1597,10 +1667,10 @@ export default function App() {
                   <span aria-hidden="true">·</span>
                   <button
                     type="button"
-                    onClick={() => setSavedModalOpen(true)}
+                    onClick={openSavedAppointments}
                     className="text-xs font-semibold text-[#B8E1D8] hover:text-white cursor-pointer tabular-nums"
                   >
-                    Мои заявки ({appointments.length})
+                    Мои заявки ({userVisibleAppointments.length})
                   </button>
                 </div>
               </div>
@@ -1616,13 +1686,51 @@ export default function App() {
         </div>
       </footer>
 
+      {/* Global EmailJS Toast Notification */}
+      {toastNotice && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-5 right-5 z-50 max-w-md rounded-2xl bg-[#0F2922] text-white border border-[#0D9488] shadow-2xl px-4 py-3.5 flex items-start gap-3"
+        >
+          <div className="w-7 h-7 rounded-lg bg-[#0D9488] flex items-center justify-center shrink-0 mt-0.5">
+            <Check className="w-4 h-4 text-white" />
+          </div>
+          <div className="text-xs leading-relaxed flex-1">
+            <div className="font-bold text-[#2DD4BF] mb-0.5">
+              Почтовый сервис EmailJS
+            </div>
+            <div>{toastNotice}</div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setToastNotice('')}
+            aria-label="Закрыть уведомление"
+            className="text-[#B8E1D8] hover:text-white p-1 cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Interactive Modals */}
       <AuthModal
         isOpen={authModalOpen}
-        onClose={() => setAuthModalOpen(false)}
+        onClose={() => {
+          setAuthModalOpen(false);
+          setPendingBookingForAuth({ pending: false, prefill: null });
+          setPendingSavedModalForAuth(false);
+        }}
         currentUser={currentUser}
-        onUserChanged={setCurrentUser}
+        onUserChanged={handleUserChanged}
         initialMode={authModalMode}
+        authReasonMessage={
+          pendingBookingForAuth.pending
+            ? 'Для оформления записи на прием необходимо войти в аккаунт или зарегистрироваться. После входа форма записи откроется автоматически.'
+            : pendingSavedModalForAuth
+              ? 'Войдите в свой аккаунт или зарегистрируйтесь, чтобы просматривать свои личные записи на прием.'
+              : undefined
+        }
       />
 
       <BookingModal
@@ -1633,6 +1741,8 @@ export default function App() {
         servicesList={services}
         doctorsList={doctors}
         currentUser={currentUser}
+        existingAppointments={appointments}
+        onShowToast={showToastNotice}
       />
 
       <EmergencyModal
@@ -1650,9 +1760,11 @@ export default function App() {
       <SavedAppointmentsModal
         isOpen={savedModalOpen}
         onClose={() => setSavedModalOpen(false)}
-        appointments={appointments}
+        appointments={userVisibleAppointments}
+        currentUser={currentUser}
         onCancelAppointment={handleCancelAppointment}
         onNewAppointment={() => openGeneralBooking()}
+        onShowToast={showToastNotice}
       />
     </div>
   );

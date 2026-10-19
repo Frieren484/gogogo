@@ -1,8 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
+  AlertTriangle,
   Calendar,
   CheckCircle2,
+  ClipboardCheck,
   Clock,
+  Download,
   Mail,
   PawPrint,
   Phone,
@@ -21,11 +24,15 @@ import {
   ServiceItem,
   SERVICES_DATA,
 } from '../data/clinicData';
+import { AppUserProfile, getClientPetProfile } from '../services/authService';
 import {
-  AppUserProfile,
   EmailNotificationLog,
-  sendAppointmentEmailNotification,
-} from '../services/authService';
+  sendRealEmailNotification,
+} from '../services/emailService';
+import {
+  downloadAppointmentVoucher,
+  getPreparationAdvice,
+} from '../utils/appointmentVoucher';
 
 export interface BookingPrefill {
   petType?: PetType;
@@ -43,7 +50,20 @@ interface BookingModalProps {
   servicesList?: ServiceItem[];
   doctorsList?: DoctorProfile[];
   currentUser?: AppUserProfile;
+  existingAppointments?: AppointmentRecord[];
+  onShowToast?: (message: string) => void;
 }
+
+const TIME_SLOTS = [
+  '09:00',
+  '11:00',
+  '13:00',
+  '15:00',
+  '17:00',
+  '19:00',
+  '21:00',
+  '00:00 (Ночной прием)',
+];
 
 export const BookingModal: React.FC<BookingModalProps> = ({
   isOpen,
@@ -53,14 +73,11 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   servicesList = SERVICES_DATA,
   doctorsList = DOCTORS_DATA,
   currentUser,
+  existingAppointments = [],
+  onShowToast,
 }) => {
+  const todayDate = new Date().toISOString().split('T')[0];
   const tomorrowDate = new Date(Date.now() + 86400000).toISOString().split('T')[0];
-
-  const allServiceOptions = [
-    ...servicesList.map((s) => s.title),
-    ...CALCULATOR_PACKAGES.map((p) => p.title),
-    'Экстренный выезд бригады на дом (за 30 минут)',
-  ];
 
   const [ownerName, setOwnerName] = useState('');
   const [phone, setPhone] = useState('');
@@ -79,23 +96,101 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const [emailNotification, setEmailNotification] = useState<EmailNotificationLog | null>(
     null
   );
+  const [autoFilledFromPetCard, setAutoFilledFromPetCard] = useState<boolean>(false);
+
+  const allServiceOptions = useMemo(() => {
+    const optionSet = new Set<string>([
+      ...servicesList.map((s) => s.title),
+      ...CALCULATOR_PACKAGES.map((p) => p.title),
+      'Экстренный выезд бригады на дом (за 30 минут)',
+    ]);
+    if (prefill?.serviceTitle) {
+      optionSet.add(prefill.serviceTitle);
+    }
+    if (selectedService) {
+      optionSet.add(selectedService);
+    }
+    return Array.from(optionSet);
+  }, [servicesList, prefill?.serviceTitle, selectedService]);
+
+  // Защита от двойной записи к одному врачу на одно и то же время:
+  // Вычисляем занятые часы для выбранного специалиста и даты среди активных заявок (status !== 'Отменена')
+  const occupiedSlotsForDoctorAndDate = useMemo(() => {
+    if (!preferredDate || selectedDoctor === 'Дежурный специалист клиники') {
+      return new Set<string>();
+    }
+    const busy = new Set<string>();
+    existingAppointments.forEach((appt) => {
+      if (appt.status === 'Отменена') return;
+      if (appt.doctorName !== selectedDoctor) return;
+      const [apptDate, apptTime] = appt.preferredDate.split(' в ').map((s) => s.trim());
+      if (apptDate === preferredDate && apptTime) {
+        busy.add(apptTime);
+      }
+    });
+    return busy;
+  }, [existingAppointments, selectedDoctor, preferredDate]);
+
+  // Автоматически переключаем время на первый свободный слот, если текущий оказался занят
+  useEffect(() => {
+    if (occupiedSlotsForDoctorAndDate.has(preferredTime)) {
+      const firstAvailable = TIME_SLOTS.find(
+        (slot) => !occupiedSlotsForDoctorAndDate.has(slot)
+      );
+      if (firstAvailable) {
+        setPreferredTime(firstAvailable);
+      }
+    }
+  }, [occupiedSlotsForDoctorAndDate, preferredTime]);
+
+  // Умная памятка подготовки к выбранной услуге
+  const preparationGuide = useMemo(
+    () => getPreparationAdvice(selectedService, prefill?.isEmergency),
+    [selectedService, prefill?.isEmergency]
+  );
 
   useEffect(() => {
     if (isOpen) {
       setErrorMessage('');
       setSubmittedRecord(null);
       setEmailNotification(null);
-      if (currentUser && !ownerName) {
-        setOwnerName(currentUser.displayName.replace(/\s*\(.*?\)\s*/g, ''));
-      }
-      if (currentUser && !email) {
+      setAutoFilledFromPetCard(false);
+
+      if (currentUser && currentUser.authSource !== 'guest') {
+        setOwnerName(currentUser.displayName.replace(/\s*\(.*?\)\s*/g, '').trim());
         setEmail(currentUser.email);
+
+        // Автоподстановка данных из сохраненной электронной медкарты питомца
+        const savedPetCard = getClientPetProfile(currentUser);
+        if (savedPetCard && savedPetCard.petName) {
+          setPetName(savedPetCard.petName);
+          if (!prefill?.petType) {
+            setPetSpecies(savedPetCard.petSpecies);
+          }
+          const cardNotes = [
+            savedPetCard.breedAndAge,
+            savedPetCard.weightKg ? `вес ${savedPetCard.weightKg} кг` : '',
+            savedPetCard.chronicNotes,
+          ]
+            .filter(Boolean)
+            .join(', ');
+          if (cardNotes) {
+            setNotes(cardNotes);
+          }
+          setAutoFilledFromPetCard(true);
+        }
+      } else {
+        setOwnerName((prev) => (prev === 'Гость' ? '' : prev));
+        setEmail((prev) => (prev === 'client@lapapomoshchi.ru' ? '' : prev));
       }
+
       if (prefill?.petType) {
         setPetSpecies(PET_TYPES_CONFIG[prefill.petType].label);
       }
       if (prefill?.serviceTitle) {
         setSelectedService(prefill.serviceTitle);
+      } else if (servicesList[0]?.title) {
+        setSelectedService(servicesList[0].title);
       }
       if (prefill?.doctorName) {
         setSelectedDoctor(prefill.doctorName);
@@ -103,7 +198,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         setSelectedDoctor('Дежурный специалист клиники');
       }
     }
-  }, [isOpen, prefill, currentUser]);
+  }, [isOpen, prefill, currentUser, servicesList]);
 
   if (!isOpen) return null;
 
@@ -114,6 +209,13 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!currentUser || currentUser.authSource === 'guest') {
+      setErrorMessage(
+        'Для записи на прием необходимо войти в систему или зарегистрироваться.'
+      );
+      return;
+    }
 
     const trimmedOwner = ownerName.trim();
     const trimmedPet = petName.trim();
@@ -140,8 +242,16 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       return;
     }
 
-    if (!preferredDate) {
-      setErrorMessage('Пожалуйста, выберите желаемую дату приема.');
+    if (!preferredDate || preferredDate < todayDate) {
+      setErrorMessage('Пожалуйста, выберите корректную дату приема (не ранее сегодняшнего дня).');
+      return;
+    }
+
+    // Проверка на пересечение слотов у врача
+    if (occupiedSlotsForDoctorAndDate.has(preferredTime)) {
+      setErrorMessage(
+        `У специалиста «${selectedDoctor}» время ${preferredTime} на ${preferredDate} уже занято. Пожалуйста, выберите другое свободное окно.`
+      );
       return;
     }
 
@@ -167,10 +277,15 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       senderAliasEmail: CLINIC_INFO.publicAliasEmail, // LapaPomochu@gmail.com
     };
 
-    const sentMail = sendAppointmentEmailNotification(newRecord);
-    setEmailNotification(sentMail);
     onBookingCreated(newRecord);
     setSubmittedRecord(newRecord);
+
+    void sendRealEmailNotification(newRecord, 'created').then((result) => {
+      setEmailNotification(result.log);
+      if (onShowToast) {
+        onShowToast(result.toastMessage);
+      }
+    });
   };
 
   const resetAndClose = () => {
@@ -232,7 +347,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
             {/* Masked Email Notification Preview Card */}
             {emailNotification && (
-              <div className="rounded-xl bg-[#E6F4F1] border border-[#0D9488] p-4 text-left mb-5 space-y-1.5">
+              <div className="rounded-xl bg-[#E6F4F1] border border-[#0D9488] p-4 text-left mb-4 space-y-1.5">
                 <div className="flex items-center justify-between gap-2 text-xs font-bold text-[#0F2922]">
                   <div className="flex items-center gap-2">
                     <Mail className="w-4 h-4 text-[#0D9488] shrink-0" />
@@ -256,7 +371,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               </div>
             )}
 
-            <div className="rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] p-4 text-left space-y-2 mb-6 text-sm">
+            <div className="rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] p-4 text-left space-y-2 mb-4 text-sm">
               <div className="flex justify-between gap-4">
                 <span className="text-[#335249]">Пациент:</span>
                 <span className="font-semibold text-[#0F2922]">
@@ -291,13 +406,45 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               )}
             </div>
 
-            <button
-              type="button"
-              onClick={resetAndClose}
-              className="w-full py-3.5 px-6 rounded-xl bg-[#0D9488] hover:bg-[#0F766E] text-white font-semibold text-sm transition-snappy whitespace-nowrap cursor-pointer"
-            >
-              Отлично, закрыть окно
-            </button>
+            {/* Памятка подготовки к приему */}
+            <div className="rounded-xl bg-white border border-[#D1EAE4] p-4 text-left mb-5 space-y-1.5">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-[#0F2922]">
+                <ClipboardCheck className="w-4 h-4 text-[#0D9488] shrink-0" />
+                <span>Памятка подготовки ({preparationGuide.categoryTitle}):</span>
+              </div>
+              {preparationGuide.items.map((item, idx) => (
+                <div key={idx} className="text-xs text-[#335249] flex items-start gap-1.5">
+                  <span className="text-[#0D9488] font-bold">•</span>
+                  <span>{item}</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  downloadAppointmentVoucher(submittedRecord);
+                  if (onShowToast) {
+                    onShowToast(
+                      `Талон #${submittedRecord.id} с памяткой подготовки скачан на ваше устройство.`
+                    );
+                  }
+                }}
+                className="w-full py-3.5 px-4 rounded-xl bg-[#F4FAF8] hover:bg-[#E6F4F1] border border-[#0D9488] text-[#0F2922] font-bold text-xs sm:text-sm transition-snappy inline-flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Download className="w-4 h-4 text-[#0D9488]" />
+                <span>Скачать талон и памятку (.txt)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={resetAndClose}
+                className="w-full py-3.5 px-6 rounded-xl bg-[#0D9488] hover:bg-[#0F766E] text-white font-semibold text-xs sm:text-sm transition-snappy whitespace-nowrap cursor-pointer"
+              >
+                Отлично, закрыть окно
+              </button>
+            </div>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="p-6 space-y-4">
@@ -310,6 +457,18 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 <span className="text-sm font-bold text-[#0D9488] tabular-nums shrink-0">
                   ~ {prefill.estimatedPrice.toLocaleString('ru-RU')} ₽
                 </span>
+              </div>
+            )}
+
+            {autoFilledFromPetCard && (
+              <div className="rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] px-3.5 py-2 flex items-center justify-between gap-2 text-xs text-[#0F2922]">
+                <div className="flex items-center gap-2">
+                  <PawPrint className="w-3.5 h-3.5 text-[#0D9488] shrink-0" />
+                  <span>
+                    Данные питомца <strong>«{petName}»</strong> подставлены из вашей медкарты
+                  </span>
+                </div>
+                <span className="text-[11px] text-[#0D9488] font-semibold">Автозаполнение</span>
               </div>
             )}
 
@@ -458,6 +617,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   <Calendar className="w-4 h-4 text-[#335249] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <input
                     type="date"
+                    min={todayDate}
                     value={preferredDate}
                     onChange={(e) => setPreferredDate(e.target.value)}
                     className="w-full pl-9 pr-3 py-2.5 text-sm rounded-xl border border-[#D1EAE4] bg-white text-[#0F2922] tabular-nums focus:outline-none focus:border-[#0D9488]"
@@ -477,23 +637,42 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                     onChange={(e) => setPreferredTime(e.target.value)}
                     className="w-full pl-9 pr-3 py-2.5 text-sm rounded-xl border border-[#D1EAE4] bg-white text-[#0F2922] tabular-nums focus:outline-none focus:border-[#0D9488]"
                   >
-                    {[
-                      '09:00',
-                      '11:00',
-                      '13:00',
-                      '15:00',
-                      '17:00',
-                      '19:00',
-                      '21:00',
-                      '00:00 (Ночной прием)',
-                    ].map((t) => (
-                      <option key={t} value={t}>
-                        {t}
-                      </option>
-                    ))}
+                    {TIME_SLOTS.map((t) => {
+                      const isOccupied = occupiedSlotsForDoctorAndDate.has(t);
+                      return (
+                        <option key={t} value={t} disabled={isOccupied}>
+                          {isOccupied ? `${t} — Занято` : t}
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
               </div>
+            </div>
+
+            {occupiedSlotsForDoctorAndDate.size > 0 && (
+              <div className="rounded-xl bg-amber-50 border border-amber-200 px-3.5 py-2 flex items-center gap-2 text-xs text-amber-900">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>
+                  Защита расписания: у специалиста <strong>{selectedDoctor}</strong> на{' '}
+                  <span className="tabular-nums font-semibold">{preferredDate}</span> уже заняты часы:{' '}
+                  <strong className="tabular-nums">
+                    {Array.from(occupiedSlotsForDoctorAndDate).join(', ')}
+                  </strong>
+                  . Доступны только свободные окна.
+                </span>
+              </div>
+            )}
+
+            {/* Live Preparation Guide Preview inside Form */}
+            <div className="rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] p-3.5 space-y-1">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-[#0F2922]">
+                <ClipboardCheck className="w-3.5 h-3.5 text-[#0D9488] shrink-0" />
+                <span>Как подготовить питомца ({preparationGuide.categoryTitle}):</span>
+              </div>
+              <p className="text-[11px] text-[#335249] leading-relaxed">
+                {preparationGuide.items[0]} Полная памятка будет прикреплена к вашему именному талону.
+              </p>
             </div>
 
             <div>

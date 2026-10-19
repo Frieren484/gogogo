@@ -86,6 +86,7 @@ export interface AppointmentRecord {
   notes?: string;
   ownerUid?: string;
   senderAliasEmail?: string;
+  doctorRecommendation?: string;
 }
 
 export const CLINIC_INFO = {
@@ -579,6 +580,8 @@ export const INITIAL_APPOINTMENTS_DATA: AppointmentRecord[] = [
     status: 'Подтверждена',
     notes: 'Золотистый ретривер, 4 года. Голодная диета соблюдена, нужен забор биохимии.',
     senderAliasEmail: 'LapaPomochu@gmail.com',
+    doctorRecommendation:
+      'Подтвержден плановый чек-ап. Пожалуйста, сохраняйте голодную диету 8 часов перед забором венозной крови, воду можно давать без ограничений.',
   },
   {
     id: 'LP-849135',
@@ -630,6 +633,8 @@ export const INITIAL_APPOINTMENTS_DATA: AppointmentRecord[] = [
     status: 'Завершена',
     notes: 'Вельш-корги, плановая лапароскопия прошла успешно, выписана домой.',
     senderAliasEmail: 'LapaPomochu@gmail.com',
+    doctorRecommendation:
+      'Операция прошла штатно, швы внутрикожные саморассасывающиеся. Рекомендовано: защитная попона 7 дней, обработка хлоргексидином 1 раз в день, контрольный осмотр через 10 суток.',
   },
   {
     id: 'LP-849319',
