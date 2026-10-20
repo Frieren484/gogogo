@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Calendar,
   CalendarCheck2,
   CheckCircle2,
   ClipboardCheck,
@@ -7,16 +8,23 @@ import {
   Download,
   FileText,
   HeartPulse,
-  Mail,
+  MessageSquarePlus,
   PawPrint,
   Plus,
+  RefreshCw,
   Save,
   ShieldCheck,
   Stethoscope,
   Trash2,
   X,
+  XCircle,
 } from 'lucide-react';
-import { AppointmentRecord, CLINIC_INFO } from '../data/clinicData';
+import {
+  AppointmentRecord,
+  resolveAppointmentPrice,
+  ServiceItem,
+  SERVICES_DATA,
+} from '../data/clinicData';
 import {
   AppUserProfile,
   ClientPetProfile,
@@ -29,12 +37,28 @@ import {
   getPreparationAdvice,
 } from '../utils/appointmentVoucher';
 
+const RESCHEDULE_TIME_SLOTS = [
+  '09:00',
+  '11:00',
+  '13:00',
+  '15:00',
+  '17:00',
+  '19:00',
+  '21:00',
+  '00:00 (Ночной прием)',
+];
+
 interface SavedAppointmentsModalProps {
   isOpen: boolean;
   onClose: () => void;
   appointments: AppointmentRecord[];
+  allAppointments?: AppointmentRecord[];
+  servicesList?: ServiceItem[];
   currentUser: AppUserProfile;
   onCancelAppointment: (id: string) => void;
+  onRescheduleAppointment?: (id: string, newPreferredDate: string) => void;
+  onDeleteCancelledAppointment?: (id: string) => void;
+  onOpenReviewForAppointment?: (record: AppointmentRecord) => void;
   onNewAppointment: () => void;
   onShowToast?: (message: string) => void;
 }
@@ -43,13 +67,27 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
   isOpen,
   onClose,
   appointments,
+  allAppointments = [],
+  servicesList = SERVICES_DATA,
   currentUser,
   onCancelAppointment,
+  onRescheduleAppointment,
+  onDeleteCancelledAppointment,
+  onOpenReviewForAppointment,
   onNewAppointment,
   onShowToast,
 }) => {
+  const todayDate = new Date().toISOString().split('T')[0];
+  const tomorrowDate = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+
   const [activeTab, setActiveTab] = useState<'appointments' | 'pet_profile'>('appointments');
   const [expandedPrepId, setExpandedPrepId] = useState<string | null>(null);
+
+  // Состояние переноса визита (Reschedule)
+  const [reschedulingId, setReschedulingId] = useState<string | null>(null);
+  const [rescheduleDate, setRescheduleDate] = useState<string>(tomorrowDate);
+  const [rescheduleTime, setRescheduleTime] = useState<string>('11:00');
+  const [rescheduleError, setRescheduleError] = useState<string>('');
 
   // Карточка питомца клиента
   const [petName, setPetName] = useState<string>('');
@@ -62,8 +100,7 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
   const [savedBanner, setSavedBanner] = useState<string>('');
 
   // Строгая RBAC-фильтрация:
-  // Если currentUser.role === 'user', показываем ТОЛЬКО собственные записи этого пользователя
-  // (по совпадению ownerUid или email). Чужие записи других клиентов никогда не отображаются.
+  // Если currentUser.role === 'user', показываем ТОЛЬКО собственные записи этого пользователя.
   const visibleAppointments = useMemo(
     () => filterAppointmentsForUser(appointments, currentUser),
     [appointments, currentUser]
@@ -72,6 +109,8 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       setSavedBanner('');
+      setReschedulingId(null);
+      setRescheduleError('');
       const storedProfile = getClientPetProfile(currentUser);
       if (storedProfile) {
         setPetName(storedProfile.petName);
@@ -82,7 +121,6 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
         setLastVaccinationDate(storedProfile.lastVaccinationDate);
         setProfileUpdatedAt(storedProfile.updatedAt);
       } else {
-        // Если карточка еще не создана, подтянем кличку из последней записи пользователя
         const latestAppt = visibleAppointments[0];
         setPetName(latestAppt?.petName || '');
         setPetSpecies(
@@ -131,6 +169,54 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
     }
   };
 
+  const startReschedule = (record: AppointmentRecord) => {
+    setRescheduleError('');
+    setReschedulingId(record.id);
+    const [existingDate, existingTime] = record.preferredDate.split(' в ').map((s) => s.trim());
+    setRescheduleDate(existingDate && existingDate >= todayDate ? existingDate : tomorrowDate);
+    setRescheduleTime(
+      existingTime && RESCHEDULE_TIME_SLOTS.includes(existingTime) ? existingTime : '11:00'
+    );
+  };
+
+  const getOccupiedSlotsForReschedule = (record: AppointmentRecord, targetDate: string) => {
+    const sourceList = allAppointments.length > 0 ? allAppointments : appointments;
+    if (!targetDate || record.doctorName === 'Дежурный специалист клиники') {
+      return new Set<string>();
+    }
+    const busy = new Set<string>();
+    sourceList.forEach((appt) => {
+      if (appt.id === record.id) return;
+      if (appt.status === 'Отменена') return;
+      if (appt.doctorName !== record.doctorName) return;
+      const [apptDate, apptTime] = appt.preferredDate.split(' в ').map((s) => s.trim());
+      if (apptDate === targetDate && apptTime) {
+        busy.add(apptTime);
+      }
+    });
+    return busy;
+  };
+
+  const handleConfirmReschedule = (record: AppointmentRecord) => {
+    if (!rescheduleDate || rescheduleDate < todayDate) {
+      setRescheduleError('Выберите корректную дату (не ранее сегодняшнего дня).');
+      return;
+    }
+    const busySlots = getOccupiedSlotsForReschedule(record, rescheduleDate);
+    if (busySlots.has(rescheduleTime)) {
+      setRescheduleError(
+        `У врача «${record.doctorName}» слот ${rescheduleTime} на ${rescheduleDate} уже занят. Выберите другое время.`
+      );
+      return;
+    }
+    const nextPreferredDate = `${rescheduleDate} в ${rescheduleTime}`;
+    if (onRescheduleAppointment) {
+      onRescheduleAppointment(record.id, nextPreferredDate);
+    }
+    setReschedulingId(null);
+    setRescheduleError('');
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F2922]/60 backdrop-blur-xs p-4 overflow-y-auto"
@@ -153,7 +239,7 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
               <p className="text-xs text-[#335249]">
                 {isAdmin
                   ? 'Полный реестр записей всех клиентов (режим Администратора)'
-                  : `Аккаунт: ${currentUser.displayName} (${currentUser.email})`}
+                  : `Профиль клиента: ${currentUser.displayName}`}
               </p>
             </div>
           </div>
@@ -384,11 +470,21 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
               {visibleAppointments.map((item) => {
                 const prep = getPreparationAdvice(item.serviceTitle, item.isEmergency);
                 const isPrepExpanded = expandedPrepId === item.id;
+                const isRescheduling = reschedulingId === item.id;
+                const isCancelled = item.status === 'Отменена';
+                const busySlots = isRescheduling
+                  ? getOccupiedSlotsForReschedule(item, rescheduleDate)
+                  : new Set<string>();
+                const displayPrice = resolveAppointmentPrice(item, servicesList);
 
                 return (
                   <div
                     key={item.id}
-                    className="rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] p-4 flex flex-col gap-2.5"
+                    className={`rounded-xl border p-4 flex flex-col gap-2.5 transition-snappy ${
+                      isCancelled
+                        ? 'bg-red-50/40 border-red-200/80'
+                        : 'bg-[#F4FAF8] border-[#D1EAE4]'
+                    }`}
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#335249]">
                       <div className="flex flex-wrap items-center gap-2 tabular-nums">
@@ -411,7 +507,7 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
                         </span>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-1.5">
                         <button
                           type="button"
                           onClick={() => handleDownloadTicket(item)}
@@ -419,18 +515,61 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
                           title="Скачать талон и памятку подготовки (.txt)"
                         >
                           <Download className="w-3.5 h-3.5 text-[#0D9488]" />
-                          <span>Талон и памятка</span>
+                          <span>Талон</span>
                         </button>
 
                         <button
                           type="button"
-                          onClick={() => onCancelAppointment(item.id)}
-                          className="text-xs text-[#335249] hover:text-red-600 inline-flex items-center gap-1 transition-snappy whitespace-nowrap cursor-pointer"
-                          title="Отменить запись"
+                          onClick={() =>
+                            isRescheduling
+                              ? setReschedulingId(null)
+                              : startReschedule(item)
+                          }
+                          className="py-1 px-2.5 rounded-lg bg-white border border-[#D1EAE4] hover:border-[#0D9488] text-xs font-semibold text-[#0D9488] inline-flex items-center gap-1 transition-snappy whitespace-nowrap cursor-pointer"
+                          title="Перенести дату или время визита"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          <span>Отменить</span>
+                          <RefreshCw className="w-3.5 h-3.5" />
+                          <span>{isCancelled ? 'Перенести и восстановить' : 'Перенести визит'}</span>
                         </button>
+
+                        {onOpenReviewForAppointment && !isCancelled && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onClose();
+                              onOpenReviewForAppointment(item);
+                            }}
+                            className="py-1 px-2.5 rounded-lg bg-[#FFF3E6] border border-[#FDBA74] hover:bg-[#F97316] text-xs font-semibold text-[#EA580C] hover:text-white inline-flex items-center gap-1 transition-snappy whitespace-nowrap cursor-pointer"
+                            title="Оставить отзыв о визите на сайте"
+                          >
+                            <MessageSquarePlus className="w-3.5 h-3.5" />
+                            <span>Оставить отзыв</span>
+                          </button>
+                        )}
+
+                        {!isCancelled ? (
+                          <button
+                            type="button"
+                            onClick={() => onCancelAppointment(item.id)}
+                            className="py-1 px-2 rounded-lg text-xs font-semibold text-red-600 hover:bg-red-50 inline-flex items-center gap-1 transition-snappy whitespace-nowrap cursor-pointer"
+                            title="Отменить визит"
+                          >
+                            <XCircle className="w-3.5 h-3.5" />
+                            <span>Отменить</span>
+                          </button>
+                        ) : (
+                          onDeleteCancelledAppointment && (
+                            <button
+                              type="button"
+                              onClick={() => onDeleteCancelledAppointment(item.id)}
+                              className="py-1 px-2 rounded-lg text-xs text-[#335249] hover:text-red-600 inline-flex items-center gap-1 transition-snappy whitespace-nowrap cursor-pointer"
+                              title="Удалить отмененную заявку из списка"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>Скрыть</span>
+                            </button>
+                          )
+                        )}
                       </div>
                     </div>
 
@@ -449,15 +588,85 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
                       <span className="tabular-nums font-semibold text-[#0F2922]">
                         Визит: {item.preferredDate}
                       </span>
-                      {item.estimatedPrice && (
-                        <>
-                          <span aria-hidden="true">·</span>
-                          <span className="font-semibold text-[#0D9488] tabular-nums">
-                            ~ {item.estimatedPrice.toLocaleString('ru-RU')} ₽
-                          </span>
-                        </>
-                      )}
+                      <span aria-hidden="true">·</span>
+                      <span className="font-semibold text-[#0D9488] tabular-nums">
+                        {displayPrice.toLocaleString('ru-RU')} ₽
+                      </span>
                     </div>
+
+                    {/* Форма переноса времени визита (Reschedule Panel) */}
+                    {isRescheduling && (
+                      <div className="rounded-xl bg-white border border-[#0D9488] p-3.5 space-y-3 mt-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-bold text-[#0F2922] flex items-center gap-1.5">
+                            <Calendar className="w-3.5 h-3.5 text-[#0D9488]" />
+                            Выберите новую дату и свободное время ({item.doctorName})
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setReschedulingId(null)}
+                            className="text-[11px] text-[#335249] hover:text-[#0F2922] cursor-pointer"
+                          >
+                            Закрыть
+                          </button>
+                        </div>
+
+                        {rescheduleError && (
+                          <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
+                            {rescheduleError}
+                          </div>
+                        )}
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 items-end">
+                          <div>
+                            <label className="block text-[11px] font-semibold text-[#335249] mb-1">
+                              Новая дата визита
+                            </label>
+                            <input
+                              type="date"
+                              min={todayDate}
+                              value={rescheduleDate}
+                              onChange={(e) => {
+                                setRescheduleDate(e.target.value);
+                                setRescheduleError('');
+                              }}
+                              className="w-full px-3 py-2 text-xs rounded-lg border border-[#D1EAE4] bg-[#F4FAF8] text-[#0F2922] tabular-nums focus:outline-none focus:border-[#0D9488]"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[11px] font-semibold text-[#335249] mb-1">
+                              Свободное время
+                            </label>
+                            <select
+                              value={rescheduleTime}
+                              onChange={(e) => {
+                                setRescheduleTime(e.target.value);
+                                setRescheduleError('');
+                              }}
+                              className="w-full px-3 py-2 text-xs rounded-lg border border-[#D1EAE4] bg-[#F4FAF8] text-[#0F2922] tabular-nums focus:outline-none focus:border-[#0D9488]"
+                            >
+                              {RESCHEDULE_TIME_SLOTS.map((slot) => {
+                                const isBusy = busySlots.has(slot);
+                                return (
+                                  <option key={slot} value={slot} disabled={isBusy}>
+                                    {isBusy ? `${slot} — Занято` : slot}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleConfirmReschedule(item)}
+                            className="py-2 px-4 rounded-lg bg-[#0D9488] hover:bg-[#0F766E] text-white text-xs font-bold transition-snappy cursor-pointer"
+                          >
+                            Сохранить новое время
+                          </button>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Заключение и рекомендации лечащего врача (если добавлены в админке) */}
                     {item.doctorRecommendation && item.doctorRecommendation.trim() && (
@@ -503,44 +712,27 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
                         </div>
                       )}
                     </div>
-
-                    {item.email && (
-                      <div className="pt-1.5 border-t border-[#D1EAE4] flex items-center gap-1.5 text-[11px] text-[#335249]">
-                        <Mail className="w-3.5 h-3.5 text-[#0D9488] shrink-0" />
-                        <span>
-                          Уведомление отправлено с{' '}
-                          <strong className="text-[#0F2922]">
-                            {item.senderAliasEmail || CLINIC_INFO.publicAliasEmail}
-                          </strong>{' '}
-                          на {item.email}
-                        </span>
-                      </div>
-                    )}
                   </div>
                 );
               })}
             </div>
           )}
 
-          {activeTab === 'appointments' && visibleAppointments.length > 0 && (
-            <div className="mt-5 pt-4 border-t border-[#D1EAE4] flex items-center justify-between gap-3">
-              <button
-                type="button"
-                onClick={onClose}
-                className="py-2.5 px-4 rounded-xl border border-[#D1EAE4] text-xs font-semibold text-[#335249] hover:text-[#0F2922] hover:bg-[#F4FAF8] transition-snappy whitespace-nowrap cursor-pointer"
-              >
-                Закрыть
-              </button>
+          {visibleAppointments.length > 0 && activeTab === 'appointments' && (
+            <div className="mt-6 pt-4 border-t border-[#D1EAE4] flex items-center justify-between gap-4">
+              <span className="text-xs text-[#335249]">
+                Всего доступных вам записей: <strong>{visibleAppointments.length}</strong>
+              </span>
               <button
                 type="button"
                 onClick={() => {
                   onClose();
                   onNewAppointment();
                 }}
-                className="py-2.5 px-5 rounded-xl bg-[#F97316] hover:bg-[#EA580C] text-white text-xs font-semibold transition-snappy inline-flex items-center gap-2 whitespace-nowrap cursor-pointer"
+                className="py-2.5 px-4 rounded-xl bg-[#0D9488] hover:bg-[#0F766E] text-white text-xs font-semibold transition-snappy inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
-                <span>Добавить еще запись</span>
+                <span>Добавить запись</span>
               </button>
             </div>
           )}

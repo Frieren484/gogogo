@@ -1,0 +1,204 @@
+{
+  "entities": {
+    "Appointment": {
+      "title": "Appointment",
+      "description": "Veterinary clinic appointment record booked by a pet owner or created by an administrator.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique appointment identifier" },
+        "createdAt": { "type": "string", "description": "Formatted creation timestamp" },
+        "ownerName": { "type": "string", "description": "Full name of the pet owner" },
+        "phone": { "type": "string", "description": "Contact phone number" },
+        "petSpecies": { "type": "string", "description": "Species of the pet (e.g., Собака, Кошка)" },
+        "petName": { "type": "string", "description": "Name of the pet" },
+        "serviceTitle": { "type": "string", "description": "Selected veterinary service title" },
+        "doctorName": { "type": "string", "description": "Assigned veterinarian name" },
+        "preferredDate": { "type": "string", "description": "Preferred visit date and time slot" },
+        "estimatedPrice": { "type": "number", "description": "Estimated service cost in RUB" },
+        "isEmergency": { "type": "boolean", "description": "Whether this is an urgent triage visit" },
+        "status": {
+          "type": "string",
+          "enum": ["Новая", "Подтверждена", "Завершена", "Отменена"],
+          "description": "Current workflow status of the appointment"
+        },
+        "notes": { "type": "string", "description": "Anamnesis or owner comments" },
+        "ownerUid": { "type": "string", "description": "UID of the user who created the appointment" },
+        "doctorRecommendation": { "type": "string", "description": "Doctor's conclusion and instructions" }
+      },
+      "required": [
+        "id",
+        "createdAt",
+        "ownerName",
+        "phone",
+        "petSpecies",
+        "petName",
+        "serviceTitle",
+        "doctorName",
+        "preferredDate",
+        "status"
+      ]
+    },
+    "PetProfile": {
+      "title": "PetProfile",
+      "description": "Cloud-synced medical card profile of a client's pet.",
+      "type": "object",
+      "properties": {
+        "petName": { "type": "string" },
+        "petSpecies": { "type": "string" },
+        "breedAndAge": { "type": "string" },
+        "weightKg": { "type": "string" },
+        "chronicNotes": { "type": "string" },
+        "lastVaccinationDate": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": [
+        "petName",
+        "petSpecies",
+        "breedAndAge",
+        "weightKg",
+        "chronicNotes",
+        "lastVaccinationDate",
+        "updatedAt"
+      ]
+    },
+    "PetStoryReview": {
+      "title": "PetStoryReview",
+      "description": "Verified patient story and review published on the clinic portal.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "ownerName": { "type": "string" },
+        "ownerRole": { "type": "string" },
+        "petName": { "type": "string" },
+        "petBreed": { "type": "string" },
+        "serviceUsed": { "type": "string" },
+        "visitDate": { "type": "string" },
+        "rating": { "type": "number" },
+        "beforeAfterOutcome": { "type": "string" },
+        "story": { "type": "string" },
+        "photoUrl": { "type": "string" }
+      },
+      "required": [
+        "id",
+        "ownerName",
+        "ownerRole",
+        "petName",
+        "petBreed",
+        "serviceUsed",
+        "visitDate",
+        "rating",
+        "beforeAfterOutcome",
+        "story",
+        "photoUrl"
+      ]
+    },
+    "ServiceItem": {
+      "title": "ServiceItem",
+      "description": "Veterinary service catalog item and price list entry.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "number": { "type": "string" },
+        "category": { "type": "string", "enum": ["diagnostics", "treatment", "care"] },
+        "categoryLabel": { "type": "string" },
+        "title": { "type": "string" },
+        "duration": { "type": "string" },
+        "priceFrom": { "type": "number" },
+        "description": { "type": "string" },
+        "included": { "type": "array", "items": { "type": "string" } },
+        "featured": { "type": "boolean" }
+      },
+      "required": [
+        "id",
+        "number",
+        "category",
+        "categoryLabel",
+        "title",
+        "duration",
+        "priceFrom",
+        "description",
+        "included"
+      ]
+    },
+    "DoctorProfile": {
+      "title": "DoctorProfile",
+      "description": "Veterinary specialist profile in the clinic roster.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string" },
+        "experienceYears": { "type": "number" },
+        "operationsCount": { "type": "string" },
+        "education": { "type": "string" },
+        "quote": { "type": "string" },
+        "specialties": { "type": "array", "items": { "type": "string" } },
+        "photoUrl": { "type": "string" },
+        "fallbackTitle": { "type": "string" },
+        "accentColor": { "type": "string" }
+      },
+      "required": [
+        "id",
+        "name",
+        "role",
+        "experienceYears",
+        "operationsCount",
+        "education",
+        "quote",
+        "specialties",
+        "photoUrl",
+        "fallbackTitle",
+        "accentColor"
+      ]
+    },
+    "UserAccount": {
+      "title": "UserAccount",
+      "description": "Registered user account stored in Firestore.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "login": { "type": "string" },
+        "password": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "role": { "type": "string", "enum": ["user"] },
+        "createdAt": { "type": "string" }
+      },
+      "required": [
+        "uid",
+        "login",
+        "password",
+        "displayName",
+        "photoURL",
+        "role",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/appointments/{appointmentId}": {
+      "schema": { "$ref": "#/entities/Appointment" },
+      "description": "All clinic appointments."
+    },
+    "/pet_profiles/{profileKey}": {
+      "schema": { "$ref": "#/entities/PetProfile" },
+      "description": "Pet medical card profiles."
+    },
+    "/reviews/{reviewId}": {
+      "schema": { "$ref": "#/entities/PetStoryReview" },
+      "description": "Published patient stories and reviews."
+    },
+    "/services/{serviceId}": {
+      "schema": { "$ref": "#/entities/ServiceItem" },
+      "description": "Veterinary services catalog."
+    },
+    "/doctors/{doctorId}": {
+      "schema": { "$ref": "#/entities/DoctorProfile" },
+      "description": "Veterinary specialists roster."
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserAccount" },
+      "description": "Registered user accounts."
+    }
+  }
+}

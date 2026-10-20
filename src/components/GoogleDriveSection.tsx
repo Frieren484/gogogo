@@ -33,16 +33,15 @@ interface DriveFileItem {
 
 interface GoogleDriveSectionProps {
   appointments: AppointmentRecord[];
-  calculatorSummaryText: string;
+  calculatorSummaryText?: string;
   userRole?: 'user' | 'admin';
   onGoogleLoginSuccess?: (profile: AppUserProfile) => void;
 }
 
 export const GoogleDriveSection: React.FC<GoogleDriveSectionProps> = ({
   appointments,
-  calculatorSummaryText,
-  userRole = 'user',
-  onGoogleLoginSuccess,
+  calculatorSummaryText = 'Сводный административный реестр клиники «Лапа Помощи»',
+  userRole = 'admin',
 }) => {
   const [needsAuth, setNeedsAuth] = useState<boolean>(true);
   const [user, setUser] = useState<User | null>(null);
@@ -54,10 +53,12 @@ export const GoogleDriveSection: React.FC<GoogleDriveSectionProps> = ({
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string>('');
 
-  // New pet medical note fields
-  const [noteTitle, setNoteTitle] = useState<string>('Медкарта питомца — Лапа Помощи');
+  // New pet medical note / admin document fields
+  const [noteTitle, setNoteTitle] = useState<string>(
+    'Служебная выписка / Медкарта — Лапа Помощи'
+  );
   const [noteContent, setNoteContent] = useState<string>(
-    'Пациент: \nВид и порода: \nДата плановой вакцинации: \nРекомендации врача клиники «Лапа Помощи»:'
+    'Пациент: \nВид и порода: \nЛечащий врач: \nНазначения и результаты обследования клиники «Лапа Помощи»:'
   );
   const [isSavingFile, setIsSavingFile] = useState<boolean>(false);
 
@@ -81,7 +82,7 @@ export const GoogleDriveSection: React.FC<GoogleDriveSectionProps> = ({
         ? `trashed = false and name contains '${sanitizedQuery}'`
         : 'trashed = false';
       const url = new URL('https://www.googleapis.com/drive/v3/files');
-      url.searchParams.set('pageSize', '10');
+      url.searchParams.set('pageSize', '12');
       url.searchParams.set('q', qParam);
       url.searchParams.set('orderBy', 'modifiedTime desc');
       url.searchParams.set(
@@ -136,22 +137,6 @@ export const GoogleDriveSection: React.FC<GoogleDriveSectionProps> = ({
       if (result) {
         setUser(result.user);
         setNeedsAuth(false);
-        if (onGoogleLoginSuccess && userRole !== 'admin') {
-          const clientProfile: AppUserProfile = {
-            uid: result.user.uid,
-            displayName: result.user.displayName || 'Клиент Лапа Помощи',
-            email: result.user.email || 'client.google@gmail.com',
-            photoURL:
-              result.user.photoURL ||
-              `data:image/svg+xml;utf8,${encodeURIComponent(
-                '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120"><rect width="120" height="120" rx="60" fill="#0D9488"/><text x="60" y="68" text-anchor="middle" font-family="Manrope, sans-serif" font-size="40" font-weight="800" fill="#FFFFFF">КЛ</text></svg>'
-              )}`,
-            role: 'user',
-            authSource: 'google',
-          };
-          saveUserProfile(clientProfile);
-          onGoogleLoginSuccess(clientProfile);
-        }
         await loadDriveFiles(searchQuery);
       }
     } catch (err: any) {
@@ -214,7 +199,7 @@ export const GoogleDriveSection: React.FC<GoogleDriveSectionProps> = ({
       }
 
       const created = await res.json();
-      setStatusMessage(`Файл «${created.name}» успешно сохранен в ваш Google Drive.`);
+      setStatusMessage(`Файл «${created.name}» успешно сохранен в рабочий Google Drive.`);
       await loadDriveFiles(searchQuery);
     } catch (err: any) {
       setErrorMessage(err?.message || 'Ошибка при создании файла в Google Drive.');
@@ -225,35 +210,41 @@ export const GoogleDriveSection: React.FC<GoogleDriveSectionProps> = ({
 
   const handleExportClinicSummaryToDrive = async () => {
     const dateStr = new Date().toLocaleDateString('ru-RU');
+    const activeAppts = appointments.filter((a) => a.status !== 'Отменена');
+    const totalRevenue = activeAppts.reduce(
+      (sum, a) => sum + (Number(a.estimatedPrice) || 0),
+      0
+    );
+
     const appointmentsText =
       appointments.length > 0
         ? appointments
             .map(
               (a, i) =>
-                `${i + 1}. Заявка #${a.id} от ${a.createdAt}\n` +
+                `${i + 1}. Заявка #${a.id} от ${a.createdAt} [${a.status}]\n` +
+                `   Владелец: ${a.ownerName} (${a.phone})\n` +
                 `   Пациент: ${a.petSpecies} «${a.petName}»\n` +
                 `   Услуга: ${a.serviceTitle}\n` +
-                `   Врач: ${a.doctorName}\n` +
-                `   Дата визита: ${a.preferredDate}\n` +
-                `   Статус: ${a.status}`
+                `   Врач: ${a.doctorName} | Визит: ${a.preferredDate}\n` +
+                `   Стоимость по прайсу: ${(Number(a.estimatedPrice) || 0).toLocaleString('ru-RU')} ₽`
             )
             .join('\n\n')
         : 'Активных заявок пока нет.';
 
     const fullDocument = [
-      `ВЕТЕРИНАРНАЯ КЛИНИКА «${CLINIC_INFO.name.toUpperCase()}» (МОСКВА)`,
+      `АДМИНИСТРАТИВНЫЙ ОТЧЕТ КЛИНИКИ «${CLINIC_INFO.name.toUpperCase()}» (МОСКВА)`,
       `Адрес: ${CLINIC_INFO.address}`,
       `Круглосуточный телефон: ${CLINIC_INFO.phoneDisplay}`,
-      `Дата формирования выписки: ${dateStr}`,
+      `Дата формирования выгрузки: ${dateStr}`,
       '------------------------------------------------------------',
-      'РАСЧЕТ ПРОГРАММЫ ЧЕК-АПА (КАЛЬКУЛЯТОР):',
+      `ФИНАНСОВАЯ СВОДКА: Всего записей: ${appointments.length} | Активных: ${activeAppts.length} | Активная выручка: ${totalRevenue.toLocaleString('ru-RU')} ₽`,
       calculatorSummaryText,
       '------------------------------------------------------------',
-      'ВАШИ ЗАПИСИ НА ПРИЕМ:',
+      'ПОЛНЫЙ ЖУРНАЛ ЗАПИСЕЙ НА ПРИЕМ:',
       appointmentsText,
     ].join('\n');
 
-    await createDriveTextFile(`Выписка_Лапа_Помощи_${dateStr}.txt`, fullDocument);
+    await createDriveTextFile(`Отчет_Админа_Лапа_Помощи_${dateStr}.txt`, fullDocument);
   };
 
   // Confirmed file deletion handler (called ONLY after user clicks Confirm in modal)
@@ -308,7 +299,7 @@ export const GoogleDriveSection: React.FC<GoogleDriveSectionProps> = ({
     setErrorMessage('');
     setStatusMessage('');
     try {
-      const updatedBody = `${noteContent}\n\n[Обновлено через портал клиники «Лапа Помощи»: ${new Date().toLocaleString(
+      const updatedBody = `${noteContent}\n\n[Обновлено главным администратором клиники «Лапа Помощи»: ${new Date().toLocaleString(
         'ru-RU'
       )}]`;
 
@@ -338,176 +329,174 @@ export const GoogleDriveSection: React.FC<GoogleDriveSectionProps> = ({
     }
   };
 
+  if (userRole !== 'admin') {
+    return null;
+  }
+
   return (
-    <section
-      id="google-drive"
-      className="py-16 lg:py-20 bg-white border-b border-[#D1EAE4]"
-    >
-      <div className="max-w-7xl mx-auto px-6 lg:px-8">
-        <div className="rounded-2xl bg-[#F4FAF8] border border-[#D1EAE4] p-6 sm:p-8 lg:p-10">
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 pb-6 border-b border-[#D1EAE4]">
-            <div>
-              <div className="text-xs font-semibold text-[#0D9488] mb-2">
-                Облачная медкарта питомца · Интеграция с Google Workspace
+    <div id="admin-google-drive" className="space-y-4">
+      <div className="rounded-2xl bg-white border border-[#D1EAE4] p-5 sm:p-6">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-5 border-b border-[#D1EAE4]">
+          <div>
+            <div className="text-xs font-bold uppercase tracking-wider text-[#0D9488] mb-1">
+              Закрытый облачный архив администратора · Google Drive API
+            </div>
+            <h3 className="text-lg sm:text-xl font-extrabold text-[#0F2922] tracking-tight">
+              Управление документами, реестрами и выписками в Google Drive
+            </h3>
+            <p className="text-xs text-[#335249] mt-1 max-w-2xl">
+              Раздел доступен только главному администратору клиники. Выгружайте полные финансовые сводки, журналы приемов и врачебные выписки на корпоративный Google Диск.
+            </p>
+          </div>
+
+          <div className="shrink-0 flex items-center gap-3">
+            {needsAuth ? (
+              <button
+                type="button"
+                onClick={handleLogin}
+                disabled={isLoggingIn}
+                className="gsi-material-button"
+              >
+                <div className="gsi-material-button-state"></div>
+                <div className="gsi-material-button-content-wrapper">
+                  <div className="gsi-material-button-icon">
+                    <svg
+                      version="1.1"
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 48 48"
+                      style={{ display: 'block' }}
+                    >
+                      <path
+                        fill="#EA4335"
+                        d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
+                      ></path>
+                      <path
+                        fill="#4285F4"
+                        d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
+                      ></path>
+                      <path
+                        fill="#FBBC05"
+                        d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
+                      ></path>
+                      <path
+                        fill="#34A853"
+                        d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
+                      ></path>
+                      <path fill="none" d="M0 0h48v48H0z"></path>
+                    </svg>
+                  </div>
+                  <span className="gsi-material-button-contents">
+                    {isLoggingIn ? 'Подключение...' : 'Sign in with Google'}
+                  </span>
+                </div>
+              </button>
+            ) : (
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="text-xs text-[#0F2922]">
+                  Подключен Google Диск:{' '}
+                  <span className="font-bold">{user?.displayName || 'Аккаунт Google'}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="py-2 px-3.5 rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] hover:bg-[#E6F4F1] text-xs font-semibold text-[#335249] hover:text-[#0F2922] inline-flex items-center gap-1.5 transition-snappy whitespace-nowrap cursor-pointer"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>Отключить диск</span>
+                </button>
               </div>
-              <h2 className="text-2xl sm:text-3xl font-extrabold text-[#0F2922] tracking-tight">
-                Документы, анализы и выписки в Google Drive
-              </h2>
-              <p className="text-sm text-[#335249] mt-1.5 max-w-2xl">
-                Подключите ваш Google Drive, чтобы сохранять расчеты чек-апа, талоны записи на прием, результаты УЗИ и вести облачную медкарту питомца.
+            )}
+          </div>
+        </div>
+
+        {statusMessage && (
+          <div className="mt-5 rounded-xl bg-[#E6F4F1] border border-[#0D9488] px-4 py-3 flex items-center justify-between gap-3 text-xs font-semibold text-[#0F2922]">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-[#0D9488] shrink-0" />
+              <span>{statusMessage}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setStatusMessage('')}
+              className="text-[#335249] hover:text-[#0F2922]"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {errorMessage && (
+          <div className="mt-5 rounded-xl bg-red-50 border border-red-200 px-4 py-3 flex items-center justify-between gap-3 text-xs font-medium text-red-700">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>{errorMessage}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setErrorMessage('')}
+              className="text-red-600 hover:text-red-800"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {needsAuth ? (
+          <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] p-5">
+              <div className="w-9 h-9 rounded-lg bg-[#E6F4F1] text-[#0D9488] flex items-center justify-center mb-3">
+                <UploadCloud className="w-5 h-5" />
+              </div>
+              <h4 className="text-sm font-bold text-[#0F2922] mb-1">
+                Выгрузка реестра заявок и кассы
+              </h4>
+              <p className="text-xs text-[#335249] leading-relaxed">
+                Экспортируйте полный список записей пациентов и финансовую сводку клиники в текстовый отчет на Google Drive.
               </p>
             </div>
 
-            <div className="shrink-0 flex items-center gap-3">
-              {needsAuth ? (
-                <button
-                  type="button"
-                  onClick={handleLogin}
-                  disabled={isLoggingIn}
-                  className="gsi-material-button"
-                >
-                  <div className="gsi-material-button-state"></div>
-                  <div className="gsi-material-button-content-wrapper">
-                    <div className="gsi-material-button-icon">
-                      <svg
-                        version="1.1"
-                        xmlns="http://www.w3.org/2000/svg"
-                        viewBox="0 0 48 48"
-                        style={{ display: 'block' }}
-                      >
-                        <path
-                          fill="#EA4335"
-                          d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
-                        ></path>
-                        <path
-                          fill="#4285F4"
-                          d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
-                        ></path>
-                        <path
-                          fill="#FBBC05"
-                          d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
-                        ></path>
-                        <path
-                          fill="#34A853"
-                          d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
-                        ></path>
-                        <path fill="none" d="M0 0h48v48H0z"></path>
-                      </svg>
-                    </div>
-                    <span className="gsi-material-button-contents">
-                      {isLoggingIn ? 'Подключение...' : 'Sign in with Google'}
-                    </span>
-                  </div>
-                </button>
-              ) : (
-                <div className="flex flex-wrap items-center gap-3">
-                  <div className="text-xs text-[#0F2922]">
-                    Подключен аккаунт:{' '}
-                    <span className="font-bold">{user?.email || user?.displayName}</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleLogout}
-                    className="py-2 px-3.5 rounded-xl bg-white border border-[#D1EAE4] hover:bg-[#E6F4F1] text-xs font-semibold text-[#335249] hover:text-[#0F2922] inline-flex items-center gap-1.5 transition-snappy whitespace-nowrap cursor-pointer"
-                  >
-                    <LogOut className="w-3.5 h-3.5" />
-                    <span>Выйти</span>
-                  </button>
-                </div>
-              )}
+            <div className="rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] p-5">
+              <div className="w-9 h-9 rounded-lg bg-[#E6F4F1] text-[#0D9488] flex items-center justify-center mb-3">
+                <FilePlus2 className="w-5 h-5" />
+              </div>
+              <h4 className="text-sm font-bold text-[#0F2922] mb-1">
+                Создание врачебных выписок (.txt)
+              </h4>
+              <p className="text-xs text-[#335249] leading-relaxed">
+                Формируйте шаблонные медкарты, протоколы УЗИ и рекомендации врачей прямо из панели администратора.
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] p-5">
+              <div className="w-9 h-9 rounded-lg bg-[#E6F4F1] text-[#0D9488] flex items-center justify-center mb-3">
+                <FolderSync className="w-5 h-5" />
+              </div>
+              <h4 className="text-sm font-bold text-[#0F2922] mb-1">
+                Полный контроль файлов клиники
+              </h4>
+              <p className="text-xs text-[#335249] leading-relaxed">
+                Ищите, обновляйте и удаляйте служебные документы в облаке с защитой от случайного удаления.
+              </p>
             </div>
           </div>
-
-          {statusMessage && (
-            <div className="mt-5 rounded-xl bg-[#E6F4F1] border border-[#0D9488] px-4 py-3 flex items-center justify-between gap-3 text-xs font-semibold text-[#0F2922]">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-[#0D9488] shrink-0" />
-                <span>{statusMessage}</span>
+        ) : (
+          <div className="mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            {/* Left Column: Create / Export Pet Medical Documents */}
+            <div className="lg:col-span-5 rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] p-5 space-y-4">
+              <div className="flex items-center justify-between gap-2">
+                <h4 className="text-sm font-bold text-[#0F2922]">
+                  Создать документ / Выгрузить сводку
+                </h4>
+                <button
+                  type="button"
+                  onClick={handleExportClinicSummaryToDrive}
+                  disabled={isSavingFile}
+                  className="py-2 px-3 rounded-lg bg-[#0D9488] hover:bg-[#0F766E] text-white text-xs font-semibold transition-snappy inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+                >
+                  <UploadCloud className="w-3.5 h-3.5" />
+                  <span>Выгрузить отчёт Админа</span>
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => setStatusMessage('')}
-                className="text-[#335249] hover:text-[#0F2922]"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-          )}
-
-          {errorMessage && (
-            <div className="mt-5 rounded-xl bg-red-50 border border-red-200 px-4 py-3 flex items-center justify-between gap-3 text-xs font-medium text-red-700">
-              <div className="flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 shrink-0" />
-                <span>{errorMessage}</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setErrorMessage('')}
-                className="text-red-600 hover:text-red-800"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-          )}
-
-          {needsAuth ? (
-            <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="rounded-xl bg-white border border-[#D1EAE4] p-5">
-                <div className="w-9 h-9 rounded-lg bg-[#E6F4F1] text-[#0D9488] flex items-center justify-center mb-3">
-                  <UploadCloud className="w-5 h-5" />
-                </div>
-                <h3 className="text-sm font-bold text-[#0F2922] mb-1">
-                  Экспорт сметы и талонов записи
-                </h3>
-                <p className="text-xs text-[#335249] leading-relaxed">
-                  Сохраняйте предварительный расчет калькулятора и список ваших записей в текстовый файл на Google Drive.
-                </p>
-              </div>
-
-              <div className="rounded-xl bg-white border border-[#D1EAE4] p-5">
-                <div className="w-9 h-9 rounded-lg bg-[#E6F4F1] text-[#0D9488] flex items-center justify-center mb-3">
-                  <FilePlus2 className="w-5 h-5" />
-                </div>
-                <h3 className="text-sm font-bold text-[#0F2922] mb-1">
-                  Дневник вакцинации и анализов
-                </h3>
-                <p className="text-xs text-[#335249] leading-relaxed">
-                  Создавайте заметки о прививках, дозировках препаратов и рекомендациях врачей прямо из браузера.
-                </p>
-              </div>
-
-              <div className="rounded-xl bg-white border border-[#D1EAE4] p-5">
-                <div className="w-9 h-9 rounded-lg bg-[#E6F4F1] text-[#0D9488] flex items-center justify-center mb-3">
-                  <FolderSync className="w-5 h-5" />
-                </div>
-                <h3 className="text-sm font-bold text-[#0F2922] mb-1">
-                  Быстрый доступ к документам
-                </h3>
-                <p className="text-xs text-[#335249] leading-relaxed">
-                  Находите прошлые выписки, снимки УЗИ и анализы на вашем Google Drive прямо во время приема у врача.
-                </p>
-              </div>
-            </div>
-          ) : (
-            <div className="mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-              {/* Left Column: Create / Export Pet Medical Documents */}
-              <div className="lg:col-span-5 rounded-xl bg-white border border-[#D1EAE4] p-5 space-y-4">
-                <div className="flex items-center justify-between gap-2">
-                  <h3 className="text-sm font-bold text-[#0F2922]">
-                    Сохранить медкарту в Google Drive
-                  </h3>
-                  {userRole === 'admin' && (
-                    <button
-                      type="button"
-                      onClick={handleExportClinicSummaryToDrive}
-                      disabled={isSavingFile}
-                      className="py-2 px-3 rounded-lg bg-[#0D9488] hover:bg-[#0F766E] text-white text-xs font-semibold transition-snappy inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
-                    >
-                      <UploadCloud className="w-3.5 h-3.5" />
-                      <span>Выгрузить отчёт Админа</span>
-                    </button>
-                  )}
-                </div>
 
                 <div className="pt-3 border-t border-[#D1EAE4] space-y-3">
                   <div>
@@ -656,7 +645,6 @@ export const GoogleDriveSection: React.FC<GoogleDriveSectionProps> = ({
             </div>
           )}
         </div>
-      </div>
 
       {/* Mandatory User Confirmation Dialog for Deleting a File */}
       {fileToDelete && (
@@ -743,6 +731,6 @@ export const GoogleDriveSection: React.FC<GoogleDriveSectionProps> = ({
           </div>
         </div>
       )}
-    </section>
+    </div>
   );
 };

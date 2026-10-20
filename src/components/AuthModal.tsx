@@ -1,21 +1,17 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  AlertCircle,
   CheckCircle2,
-  Eye,
-  EyeOff,
   KeyRound,
-  Lock,
   LogIn,
   LogOut,
   ShieldAlert,
-  UserPlus,
+  ShieldCheck,
+  UserCheck,
   X,
 } from 'lucide-react';
 import {
   AppUserProfile,
   authenticateWithCredentials,
-  registerUserAccount,
   signInWithGoogleWithFallback,
   signOutAccount,
 } from '../services/authService';
@@ -34,105 +30,68 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   onClose,
   currentUser,
   onUserChanged,
-  initialMode = 'login',
   authReasonMessage,
 }) => {
-  const [activeTab, setActiveTab] = useState<'login' | 'register'>(initialMode);
-  const [loginValue, setLoginValue] = useState('');
-  const [passwordValue, setPasswordValue] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
+  const [activeTab, setActiveTab] = useState<'google' | 'admin'>('google');
+  const [loginInput, setLoginInput] = useState('');
+  const [passwordInput, setPasswordInput] = useState('');
+  const [loadingGoogle, setLoadingGoogle] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-  const [successMessage, setSuccessMessage] = useState('');
-  const [isLoadingGoogle, setIsLoadingGoogle] = useState(false);
-  const closeTimerRef = useRef<number | null>(null);
+  const [statusMessage, setStatusMessage] = useState('');
 
   useEffect(() => {
     if (isOpen) {
-      setActiveTab(initialMode);
-      setLoginValue('');
-      setPasswordValue('');
-      setShowPassword(false);
+      setActiveTab('google');
       setErrorMessage('');
-      setSuccessMessage('');
+      setStatusMessage('');
     }
-    return () => {
-      if (closeTimerRef.current !== null) {
-        window.clearTimeout(closeTimerRef.current);
-        closeTimerRef.current = null;
-      }
-    };
-  }, [isOpen, initialMode]);
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
-  const switchTab = (tab: 'login' | 'register') => {
-    setActiveTab(tab);
-    setErrorMessage('');
-    setSuccessMessage('');
-  };
-
-  const handleCredentialsSubmit = (e: React.FormEvent) => {
+  const handleAdminLoginSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
-    setSuccessMessage('');
+    setStatusMessage('');
 
-    if (activeTab === 'login') {
-      const result = authenticateWithCredentials(loginValue, passwordValue);
-      if (result.ok === false) {
-        setErrorMessage(result.error);
-        return;
-      }
-
-      onUserChanged(result.user);
-      onClose();
-      if (result.user.role === 'admin' && !authReasonMessage) {
-        window.setTimeout(() => {
-          document.getElementById('admin-panel')?.scrollIntoView({ behavior: 'smooth' });
-        }, 100);
-      }
-    } else {
-      const result = registerUserAccount(loginValue, passwordValue);
-      if (result.ok === false) {
-        setErrorMessage(result.error);
-        return;
-      }
-
-      onUserChanged(result.user);
-      if (authReasonMessage) {
-        onClose();
-        return;
-      }
-      setSuccessMessage(
-        `Аккаунт «${result.user.login}» успешно зарегистрирован! Вы вошли с правами Пользователя (Клиента).`
-      );
-      setLoginValue('');
-      setPasswordValue('');
-      closeTimerRef.current = window.setTimeout(() => {
-        onClose();
-      }, 700);
+    const result = authenticateWithCredentials(loginInput, passwordInput);
+    if (!result.ok) {
+      setErrorMessage(result.error);
+      return;
     }
+
+    onUserChanged(result.user);
+    setLoginInput('');
+    setPasswordInput('');
+    setStatusMessage(
+      'Вход выполнен: активирован режим Главного администратора (Логин: 1). Открываем панель управления...'
+    );
+    setTimeout(() => {
+      onClose();
+    }, 450);
   };
 
   const handleGoogleSignIn = async () => {
+    setLoadingGoogle(true);
     setErrorMessage('');
-    setSuccessMessage('');
-    setIsLoadingGoogle(true);
+    setStatusMessage('');
     try {
       const profile = await signInWithGoogleWithFallback();
       onUserChanged(profile);
-      onClose();
+      setStatusMessage(`Вход через Google выполнен (${profile.displayName}).`);
+      setTimeout(() => {
+        onClose();
+      }, 450);
     } finally {
-      setIsLoadingGoogle(false);
+      setLoadingGoogle(false);
     }
   };
 
-  const handleSignOut = async () => {
+  const handleLogout = async () => {
+    setErrorMessage('');
     const guest = await signOutAccount();
     onUserChanged(guest);
-    setLoginValue('');
-    setPasswordValue('');
-    setErrorMessage('');
-    setSuccessMessage('Вы вышли из учетной записи.');
+    setStatusMessage('Вы вышли из аккаунта. Текущий режим — Гость.');
   };
 
   return (
@@ -143,17 +102,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       aria-labelledby="auth-modal-title"
     >
       <div className="relative w-full max-w-md rounded-2xl bg-white border border-[#D1EAE4] shadow-2xl overflow-hidden my-8">
-        {/* Modal Header */}
+        {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 bg-[#F4FAF8] border-b border-[#D1EAE4]">
-          <div>
-            <h3 id="auth-modal-title" className="text-lg font-bold text-[#0F2922]">
-              {activeTab === 'login' ? 'Вход в систему' : 'Регистрация аккаунта'}
-            </h3>
-            <p className="text-xs text-[#335249]">
-              {activeTab === 'login'
-                ? 'Войдите по существующему логину и паролю или через Google'
-                : 'Создание клиентского профиля (без доступа к админ-панели)'}
-            </p>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-[#0D9488] flex items-center justify-center text-white shrink-0">
+              <KeyRound className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 id="auth-modal-title" className="text-lg font-bold text-[#0F2922]">
+                Вход в систему «Лапа Помощи»
+              </h3>
+              <p className="text-xs text-[#335249]">
+                Клиенты входят через Google · Администратор по логину и паролю
+              </p>
+            </div>
           </div>
           <button
             type="button"
@@ -166,37 +128,43 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         </div>
 
         <div className="p-6 space-y-5">
-          {authReasonMessage && (
-            <div className="rounded-xl bg-[#FFF7ED] border border-[#F97316]/50 p-3.5 flex items-start gap-2.5 text-xs font-semibold text-[#9A3412]">
-              <AlertCircle className="w-4 h-4 text-[#F97316] shrink-0 mt-0.5" />
-              <span>{authReasonMessage}</span>
+          {/* Mandatory Auth Notice when triggered by booking */}
+          {authReasonMessage && currentUser.authSource === 'guest' && (
+            <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-xs font-medium text-amber-900">
+              {authReasonMessage}
             </div>
           )}
 
-          {/* Active Session Banner */}
+          {/* Active Session Summary */}
           <div className="rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] p-3.5 flex items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
               <img
                 src={currentUser.photoURL}
                 alt={currentUser.displayName}
                 referrerPolicy="no-referrer"
-                className="w-10 h-10 rounded-full object-cover border border-[#D1EAE4] shrink-0"
+                className="w-10 h-10 rounded-full border border-[#D1EAE4] shrink-0 object-cover"
               />
               <div className="min-w-0">
-                <div className="text-xs font-bold text-[#0F2922] truncate">
-                  {currentUser.displayName}
-                </div>
-                <div className="text-[11px] text-[#335249] truncate">
-                  Роль:{' '}
-                  <strong
-                    className={
-                      currentUser.role === 'admin' ? 'text-[#F97316]' : 'text-[#0D9488]'
-                    }
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-bold text-[#0F2922] truncate">
+                    {currentUser.displayName}
+                  </span>
+                  <span
+                    className={`px-2 py-0.5 rounded-md text-[11px] font-bold uppercase tracking-wider shrink-0 ${
+                      currentUser.role === 'admin'
+                        ? 'bg-[#FFF3E6] text-[#EA580C]'
+                        : 'bg-[#E6F4F1] text-[#0D9488]'
+                    }`}
                   >
-                    {currentUser.role === 'admin'
-                      ? 'Администратор'
-                      : 'Пользователь (Клиент)'}
-                  </strong>
+                    {currentUser.role === 'admin' ? 'Админ' : 'Клиент'}
+                  </span>
+                </div>
+                <div className="text-xs text-[#335249] truncate">
+                  {currentUser.authSource === 'guest'
+                    ? 'Гостевой режим'
+                    : currentUser.role === 'admin'
+                      ? 'Служебный доступ администратора'
+                      : 'Авторизован через Google'}
                 </div>
               </div>
             </div>
@@ -204,202 +172,137 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             {currentUser.authSource !== 'guest' && (
               <button
                 type="button"
-                onClick={handleSignOut}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white hover:bg-[#E6F4F1] border border-[#D1EAE4] text-xs font-semibold text-[#0F2922] transition-snappy shrink-0 cursor-pointer"
+                onClick={handleLogout}
+                className="py-1.5 px-3 rounded-lg border border-[#D1EAE4] bg-white hover:bg-red-50 text-xs font-semibold text-[#335249] hover:text-red-600 inline-flex items-center gap-1.5 transition-snappy shrink-0 cursor-pointer"
               >
-                <LogOut className="w-3.5 h-3.5 text-[#335249]" />
+                <LogOut className="w-3.5 h-3.5" />
                 <span>Выйти</span>
               </button>
             )}
           </div>
 
-          {/* Mode Switcher Tabs: Вход / Регистрация */}
+          {/* Mode Tabs: Clients (Google) vs Staff (Admin 1/1) */}
           <div className="grid grid-cols-2 gap-1.5 p-1 bg-[#F4FAF8] rounded-xl border border-[#D1EAE4]">
             <button
               type="button"
-              onClick={() => switchTab('login')}
-              className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg text-xs font-bold transition-snappy cursor-pointer ${
-                activeTab === 'login'
+              onClick={() => {
+                setActiveTab('google');
+                setErrorMessage('');
+                setStatusMessage('');
+              }}
+              className={`py-2.5 px-3 rounded-lg text-xs font-bold inline-flex items-center justify-center gap-1.5 transition-snappy cursor-pointer ${
+                activeTab === 'google'
                   ? 'bg-[#0D9488] text-white shadow-xs'
                   : 'text-[#335249] hover:text-[#0F2922]'
               }`}
             >
               <LogIn className="w-3.5 h-3.5" />
-              <span>Вход по данным</span>
+              <span>Для клиентов (Google)</span>
             </button>
             <button
               type="button"
-              onClick={() => switchTab('register')}
-              className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg text-xs font-bold transition-snappy cursor-pointer ${
-                activeTab === 'register'
+              onClick={() => {
+                setActiveTab('admin');
+                setErrorMessage('');
+                setStatusMessage('');
+              }}
+              className={`py-2.5 px-3 rounded-lg text-xs font-bold inline-flex items-center justify-center gap-1.5 transition-snappy cursor-pointer ${
+                activeTab === 'admin'
                   ? 'bg-[#0D9488] text-white shadow-xs'
                   : 'text-[#335249] hover:text-[#0F2922]'
               }`}
             >
-              <UserPlus className="w-3.5 h-3.5" />
-              <span>Регистрация</span>
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>Сотрудник / Админ</span>
             </button>
           </div>
 
-          {/* Error / Success Alerts */}
+          {/* Feedback messages */}
           {errorMessage && (
-            <div className="rounded-xl bg-[#FFF7ED] border border-[#F97316]/40 p-3.5 flex items-start gap-2.5 text-xs text-[#9A3412]">
-              <AlertCircle className="w-4 h-4 text-[#F97316] shrink-0 mt-0.5" />
+            <div className="rounded-xl bg-red-50 border border-red-200 px-3.5 py-2.5 flex items-start gap-2 text-xs font-medium text-red-700">
+              <ShieldAlert className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
               <span>{errorMessage}</span>
             </div>
           )}
 
-          {successMessage && (
-            <div className="rounded-xl bg-[#E6F4F1] border border-[#0D9488]/40 p-3.5 flex items-start gap-2.5 text-xs text-[#0F2922]">
-              <CheckCircle2 className="w-4 h-4 text-[#0D9488] shrink-0 mt-0.5" />
-              <span>{successMessage}</span>
+          {statusMessage && (
+            <div className="rounded-xl bg-[#E6F4F1] border border-[#0D9488] px-3.5 py-2.5 flex items-center gap-2 text-xs font-medium text-[#0F2922]">
+              <CheckCircle2 className="w-4 h-4 text-[#0D9488] shrink-0" />
+              <span>{statusMessage}</span>
             </div>
           )}
 
-          {/* Minimal Login / Registration Form (Login + Password) */}
-          <form onSubmit={handleCredentialsSubmit} className="space-y-4">
-            <div>
-              <label
-                htmlFor="auth-login-input"
-                className="block text-xs font-bold text-[#0F2922] mb-1.5"
-              >
-                Логин
-              </label>
-              <div className="relative">
-                <KeyRound className="w-4 h-4 text-[#335249] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <input
-                  id="auth-login-input"
-                  type="text"
-                  value={loginValue}
-                  onChange={(e) => setLoginValue(e.target.value)}
-                  placeholder={
-                    activeTab === 'login'
-                      ? 'Введите логин (например: anna или 1)'
-                      : 'Придумайте логин клиента'
-                  }
-                  autoComplete="username"
-                  className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] text-sm text-[#0F2922] placeholder:text-[#335249]/60 focus:outline-none focus:border-[#0D9488] focus:bg-white transition-snappy"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label
-                htmlFor="auth-password-input"
-                className="block text-xs font-bold text-[#0F2922] mb-1.5"
-              >
-                Пароль
-              </label>
-              <div className="relative">
-                <Lock className="w-4 h-4 text-[#335249] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <input
-                  id="auth-password-input"
-                  type={showPassword ? 'text' : 'password'}
-                  value={passwordValue}
-                  onChange={(e) => setPasswordValue(e.target.value)}
-                  placeholder={
-                    activeTab === 'login' ? 'Введите пароль' : 'Придумайте пароль'
-                  }
-                  autoComplete={
-                    activeTab === 'login' ? 'current-password' : 'new-password'
-                  }
-                  className="w-full pl-10 pr-10 py-2.5 rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] text-sm text-[#0F2922] placeholder:text-[#335249]/60 focus:outline-none focus:border-[#0D9488] focus:bg-white transition-snappy"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((prev) => !prev)}
-                  aria-label={showPassword ? 'Скрыть пароль' : 'Показать пароль'}
-                  className="w-8 h-8 rounded-lg flex items-center justify-center text-[#335249] hover:text-[#0F2922] absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer"
-                >
-                  {showPassword ? (
-                    <EyeOff className="w-4 h-4" />
-                  ) : (
-                    <Eye className="w-4 h-4" />
-                  )}
-                </button>
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              className="w-full py-3 px-4 rounded-xl bg-[#0D9488] hover:bg-[#0F766E] text-white font-bold text-sm transition-snappy cursor-pointer"
-            >
-              {activeTab === 'login'
-                ? 'Войти по логину и паролю'
-                : 'Зарегистрироваться как Клиент'}
-            </button>
-          </form>
-
-          {/* Google Sign-In (Client Only) on Login Tab */}
-          {activeTab === 'login' && (
-            <div className="pt-4 border-t border-[#D1EAE4] space-y-3">
-              <div className="text-xs font-semibold text-[#335249] text-center">
-                Или быстрый вход для клиентов через Google
+          {activeTab === 'google' ? (
+            /* TAB 1: GOOGLE LOGIN FOR ALL REGULAR USERS */
+            <div className="space-y-4">
+              <div className="rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] p-4 space-y-2">
+                <div className="text-sm font-bold text-[#0F2922]">
+                  Быстрый вход для владельцев питомцев
+                </div>
+                <p className="text-xs text-[#335249] leading-relaxed">
+                  Вход клиентов выполняется в один клик через ваш аккаунт{' '}
+                  <strong>Google</strong> без паролей и кодов подтверждения. Все ваши записи на прием, именные талоны и электронная медкарта питомца привязываются к вашему профилю.
+                </p>
               </div>
 
               <button
                 type="button"
                 onClick={handleGoogleSignIn}
-                disabled={isLoadingGoogle}
-                className="gsi-material-button w-full! justify-center!"
+                disabled={loadingGoogle}
+                className="w-full py-3.5 px-5 rounded-xl bg-[#0D9488] hover:bg-[#0F766E] text-white text-sm font-bold shadow-md inline-flex items-center justify-center gap-2.5 transition-snappy cursor-pointer disabled:opacity-60"
               >
-                <div className="gsi-material-button-state"></div>
-                <div className="gsi-material-button-content-wrapper">
-                  <div className="gsi-material-button-icon">
-                    <svg
-                      version="1.1"
-                      xmlns="http://www.w3.org/2000/svg"
-                      viewBox="0 0 48 48"
-                      style={{ display: 'block' }}
-                    >
-                      <path
-                        fill="#EA4335"
-                        d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
-                      ></path>
-                      <path
-                        fill="#4285F4"
-                        d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
-                      ></path>
-                      <path
-                        fill="#FBBC05"
-                        d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
-                      ></path>
-                      <path
-                        fill="#34A853"
-                        d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
-                      ></path>
-                      <path fill="none" d="M0 0h48v48H0z"></path>
-                    </svg>
-                  </div>
-                  <span className="gsi-material-button-contents">
-                    {isLoadingGoogle
-                      ? 'Вход через Google...'
-                      : 'Войти через Google (Клиент)'}
-                  </span>
-                </div>
+                <LogIn className="w-4 h-4" />
+                <span>
+                  {loadingGoogle
+                    ? 'Подключение к аккаунту Google...'
+                    : 'Войти через Google'}
+                </span>
               </button>
             </div>
-          )}
+          ) : (
+            /* TAB 2: ADMIN LOGIN BY CREDENTIALS (STRICTLY 1 / 1) */
+            <form onSubmit={handleAdminLoginSubmit} className="space-y-4">
+              <div className="rounded-xl bg-[#FFF3E6] border border-[#FDBA74] px-3.5 py-2.5 text-xs text-[#9A3412]">
+                Служебный вход по логину и паролю предназначен <strong>только для главного администратора</strong> клиники (Логин: <strong className="tabular-nums">1</strong>, Пароль: <strong className="tabular-nums">1</strong>).
+              </div>
 
-          {/* Security & Role Isolation Notice */}
-          <div className="rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] px-4 py-3 flex items-start gap-2.5 text-xs text-[#335249]">
-            <ShieldAlert className="w-4 h-4 text-[#0D9488] shrink-0 mt-0.5" />
-            <div className="space-y-1">
-              {activeTab === 'register' ? (
-                <span>
-                  Все новые аккаунты регистрируются строго с правами{' '}
-                  <strong className="text-[#0F2922]">Пользователя (Клиента)</strong> и не
-                  могут войти в систему администратора.
-                </span>
-              ) : (
-                <span>
-                  Для входа в систему <strong className="text-[#0F2922]">Администратора</strong>{' '}
-                  используйте защищенные данные: логин <code className="font-bold">1</code>, пароль{' '}
-                  <code className="font-bold">1</code>. Обычные пользователи не имеют доступа к Админ-панели.
-                </span>
-              )}
-            </div>
-          </div>
+              <div>
+                <label className="block text-xs font-semibold text-[#0F2922] mb-1.5">
+                  Логин администратора *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={loginInput}
+                  onChange={(e) => setLoginInput(e.target.value)}
+                  placeholder="Введите логин (1)"
+                  className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#D1EAE4] bg-white text-[#0F2922] focus:outline-none focus:border-[#0D9488]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-[#0F2922] mb-1.5">
+                  Пароль *
+                </label>
+                <input
+                  type="password"
+                  required
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  placeholder="Введите пароль (1)"
+                  className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#D1EAE4] bg-white text-[#0F2922] focus:outline-none focus:border-[#0D9488]"
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-3 px-5 rounded-xl bg-[#F97316] hover:bg-[#EA580C] text-white text-sm font-bold transition-snappy inline-flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <UserCheck className="w-4 h-4" />
+                <span>Войти в панель администратора</span>
+              </button>
+            </form>
+          )}
         </div>
       </div>
     </div>

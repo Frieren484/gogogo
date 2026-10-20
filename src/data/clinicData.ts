@@ -74,18 +74,16 @@ export interface AppointmentRecord {
   createdAt: string;
   ownerName: string;
   phone: string;
-  email?: string;
   petSpecies: string;
   petName: string;
   serviceTitle: string;
   doctorName: string;
   preferredDate: string;
-  estimatedPrice?: number;
+  estimatedPrice: number;
   isEmergency?: boolean;
   status: string;
   notes?: string;
   ownerUid?: string;
-  senderAliasEmail?: string;
   doctorRecommendation?: string;
 }
 
@@ -97,9 +95,6 @@ export const CLINIC_INFO = {
   phoneRaw: '+74951282407',
   emergencyDispatchMinutes: 30,
   schedule: 'Круглосуточно 24/7, без выходных и праздников',
-  email: 'LapaPomochu@gmail.com',
-  internalSenderEmail: 'azazaza2092092@gmail.com',
-  publicAliasEmail: 'LapaPomochu@gmail.com',
   licenseNumber: 'Лицензия Департамента ветеринарии № ЛО-77-01-021849',
   heroPhotoUrl:
     'https://images.unsplash.com/photo-1628009368231-7bb7cfcb0def?auto=format&fit=crop&w=1400&q=85',
@@ -410,6 +405,47 @@ export const DOCTORS_DATA: DoctorProfile[] = [
   },
 ];
 
+export type ReviewSpeciesFilter = 'all' | 'dogs' | 'cats' | 'exotic';
+
+export function getReviewSpeciesCategory(
+  review: TestimonialItem
+): Exclude<ReviewSpeciesFilter, 'all'> {
+  const text = `${review.petBreed} ${review.petName} ${review.serviceUsed} ${review.story}`.toLowerCase();
+
+  if (
+    text.includes('кролик') ||
+    text.includes('свинк') ||
+    text.includes('шиншилл') ||
+    text.includes('хомяк') ||
+    text.includes('крыс') ||
+    text.includes('дегу') ||
+    text.includes('грызун') ||
+    text.includes('ратолог') ||
+    text.includes('экзот') ||
+    text.includes('хорек') ||
+    text.includes('птиц') ||
+    text.includes('попуга')
+  ) {
+    return 'exotic';
+  }
+
+  if (
+    text.includes('кот') ||
+    text.includes('кошк') ||
+    text.includes('мейн-кун') ||
+    text.includes('вислоух') ||
+    text.includes('бенгал') ||
+    text.includes('абиссин') ||
+    text.includes('сфинкс') ||
+    text.includes('британ') ||
+    text.includes('котенок')
+  ) {
+    return 'cats';
+  }
+
+  return 'dogs';
+}
+
 export const TESTIMONIALS_DATA: TestimonialItem[] = [
   {
     id: 't1',
@@ -470,6 +506,111 @@ export const TESTIMONIALS_DATA: TestimonialItem[] = [
       'Делали Луне лапароскопическую стерилизацию. Никаких огромных разрезов и перевязок — всего микроскопический косметический шов. Пока Луна просыпалась в дневном стационаре, врачи дважды присылали нам в Telegram видео и показатели температуры. Цена до рубля совпала с тем, что мы заранее посчитали в калькуляторе на сайте.',
     photoUrl:
       'https://images.unsplash.com/photo-1612536057832-2ff7ead58194?auto=format&fit=crop&w=600&q=80',
+  },
+  {
+    id: 't5',
+    ownerName: 'Денис и Алина Морозовы',
+    ownerRole: 'Дизайнер интерьеров, м. Новые Черёмушки (Москва)',
+    petName: 'Бруно',
+    petBreed: 'Французский бульдог, 3 года',
+    serviceUsed: 'Эндоскопическая коррекция БЦС + кислородный бокс',
+    visitDate: 'Октябрь 2026',
+    rating: 5,
+    beforeAfterOutcome: 'Свободное дыхание без храпа и одышки в жаркую погоду',
+    story:
+      'Бруно тяжело дышал даже после короткой прогулки, летом дважды случались приступы гипоксии. Главврач Алексей Викторович Смирнов провел малоинвазивную пластику ноздрей и мягкого нёба под газовым наркозом. Уже на второй день пес впервые за три года спал совершенно бесшумно и теперь спокойно бегает в парке наравне с другими собаками.',
+    photoUrl:
+      'https://images.unsplash.com/photo-1583511655857-d19b40a7a54e?auto=format&fit=crop&w=600&q=80',
+  },
+  {
+    id: 't6',
+    ownerName: 'Светлана Романова',
+    ownerRole: 'Финансовый аудитор, м. Академическая (Москва)',
+    petName: 'Тайсон',
+    petBreed: 'Мейн-кун, 6 лет',
+    serviceUsed: 'УЗИ брюшной полости + интенсивная терапия в стационаре',
+    visitDate: 'Сентябрь 2026',
+    rating: 5,
+    beforeAfterOutcome: 'Купирование острой задержки мочи и полное восстановление почек',
+    story:
+      'Вечером заметили, что наш 9-килограммовый мейн-кун Тайсон подолгу сидит в лотке и плачет. Примчались в клинику к полуночи: Дмитрий Игоревич Морозов за 10 минут сделал FAST-УЗИ, экспресс-биохимию крови и под мягкой седацией снял обструкцию. Двое суток в кошачьем стационаре с инфузоматами спасли коту почки — сейчас анализы в полной норме.',
+    photoUrl:
+      'https://images.unsplash.com/photo-1533738363-b7f9aef128ce?auto=format&fit=crop&w=600&q=80',
+  },
+  {
+    id: 't7',
+    ownerName: 'Виктория Лебедева',
+    ownerRole: 'Врач-педиатр, Ленинский проспект (Москва)',
+    petName: 'Оливия',
+    petBreed: 'Бенгальская кошка, 2 года',
+    serviceUsed: 'Эндоскопическая гастроскопия + рентген с контрастом',
+    visitDate: 'Октябрь 2026',
+    rating: 5,
+    beforeAfterOutcome: 'Извлечение силиконовой ленты из желудка без разреза брюшной стенки',
+    story:
+      'Как врач я сразу оценила уровень оснащения клиники: у Оливии началась рвота после игры с детской игрушкой. На УЗИ увидели инородную ленту в желудке. Вместо травматичной гастротомии со швами хирурги аккуратно достали предмет гибким эндоскопом через пищевод. Через 4 часа мы уже забрали активную кошку домой без воротника и уколов.',
+    photoUrl:
+      'https://images.unsplash.com/photo-1513360382564-850120167725?auto=format&fit=crop&w=600&q=80',
+  },
+  {
+    id: 't8',
+    ownerName: 'Павел и Ксения Орловы',
+    ownerRole: 'Инженер-проектировщик, м. Беляево (Москва)',
+    petName: 'Персик',
+    petBreed: 'Морская свинка породы скинни, 1.8 года',
+    serviceUsed: 'Прием ратолога + небулайзерная терапия в теплом боксе',
+    visitDate: 'Сентябрь 2026',
+    rating: 5,
+    beforeAfterOutcome: 'Вылечили двустороннюю пневмонию у морской свинки за 7 дней',
+    story:
+      'В двух обычных ветклиниках нам прямо сказали, что грызунов не лечат, а Персик тяжело дышал и терял вес. В «Лапе Помощи» ратолог Анна Павловна Соколова сделала цифровой микро-рентген легких, поместила малыша в кислородный бокс с подогревом и подобрала безопасные для свинок антибиотики. Персик снова свистит при виде огурца и набрал свои 950 граммов!',
+    photoUrl:
+      'https://images.unsplash.com/photo-1548767797-d8c844163c4c?auto=format&fit=crop&w=600&q=80',
+  },
+  {
+    id: 't9',
+    ownerName: 'Наталья Ветрова',
+    ownerRole: 'Юрист, район Обручевский (Москва)',
+    petName: 'Тедди',
+    petBreed: 'Немецкий померанский шпиц, 5 лет',
+    serviceUsed: 'Ортопедическая операция на коленном суставе + реабилитация',
+    visitDate: 'Август 2026',
+    rating: 5,
+    beforeAfterOutcome: 'Устранение медиального вывиха коленной чашечки, бегает на всех 4 лапах',
+    story:
+      'Тедди внезапно начал поджимать заднюю лапку на прогулке. Алексей Викторович провел ортопедические тесты и рентген — оказался вывих пателлы 3-й степени. Операция прошла блестяще: мультимодальное обезболивание сработало так мягко, что песик даже не скулил. Уже через три недели после операции Тедди уверенно опирается на лапу.',
+    photoUrl:
+      'https://images.unsplash.com/photo-1543466835-00a7907e9de1?auto=format&fit=crop&w=600&q=80',
+  },
+  {
+    id: 't10',
+    ownerName: 'Михаил Захаров',
+    ownerRole: 'Пилот гражданской авиации, м. Тропарёво (Москва)',
+    petName: 'Симба',
+    petBreed: 'Абиссинская кошка, 12 лет',
+    serviceUsed: 'Гериатрический чек-ап + контроль артериального давления',
+    visitDate: 'Октябрь 2026',
+    rating: 5,
+    beforeAfterOutcome: 'Ранняя диагностика гипертиреоза и стабилизация веса у кота 12 лет',
+    story:
+      'Симба сильно похудел при повышенном аппетите, а в силу возраста мы переживали за сердце и почки. Записались на комплексный возрастной чек-ап к Елене Сергеевне Волковой. За 40 минут в одном кабинете взяли кровь на гормоны Т4, сделали УЗИ, ЭхоКГ и измерили давление тонометром PetMAP. Назначили таблетки — за месяц вес вырос на 600 г, шерсть снова блестит!',
+    photoUrl:
+      'https://images.unsplash.com/photo-1573865526739-10659fec78a5?auto=format&fit=crop&w=600&q=80',
+  },
+  {
+    id: 't11',
+    ownerName: 'Артем и Юлия Сорокины',
+    ownerRole: 'Маркетолог, м. Воронцовская (Москва)',
+    petName: 'Джекки',
+    petBreed: 'Джек-рассел-терьер, 2 года',
+    serviceUsed: 'Экстренный выезд ветмобиля на дом + антидотная терапия',
+    visitDate: 'Сентябрь 2026',
+    rating: 5,
+    beforeAfterOutcome: 'Прибытие бригады за 24 минуты при остром отравлении и спасение жизни',
+    story:
+      'На даче под Москвой Джекки укусила гадюка в морду — отек рос буквально на глазах, собака начала задыхаться. Вызвали экстренную бригаду «Лапы Помощи»: ветмобиль с реаниматологом приехал через 24 минуты! Прямо в машине поставили капельницу, ввели препараты и доставили в стационар под круглосуточный мониторинг. Вы спасли нашего члена семьи!',
+    photoUrl:
+      'https://images.unsplash.com/photo-1517849845537-4d257902454a?auto=format&fit=crop&w=600&q=80',
   },
 ];
 
@@ -545,7 +686,7 @@ export const EMERGENCY_SYMPTOMS: EmergencySymptom[] = [
     label: 'Частые безуспешные позывы в лоток, крик при попытке мочеиспускания',
     severity: 'critical',
     firstAid:
-      'Острая задержка мочи угрожает жизни в течение 12–24 часов. Не давайтe мочегонные препараты и не давите на живот — требуется катетеризация.',
+      'Острая задержка мочи угрожает жизни в течение 12–24 часов. Не давайте мочегонные препараты и не давите на живот — требуется катетеризация.',
   },
   {
     id: 'gi-rodent',
@@ -563,13 +704,113 @@ export const EMERGENCY_SYMPTOMS: EmergencySymptom[] = [
   },
 ];
 
+export type PetStoryReview = TestimonialItem;
+
+/**
+ * Единая функция расчета стоимости услуги по актуальному прайс-листу и программам калькулятора.
+ * Учитывает вид животного для пакетных программ калькулятора и дополнительные опции.
+ */
+export function resolveServicePriceByTitle(
+  serviceTitle: string,
+  petSpeciesOrServices?: string | ServiceItem[],
+  maybeServicesList: ServiceItem[] = SERVICES_DATA
+): number {
+  const petSpecies =
+    typeof petSpeciesOrServices === 'string' ? petSpeciesOrServices : undefined;
+  const servicesList = Array.isArray(petSpeciesOrServices)
+    ? petSpeciesOrServices
+    : maybeServicesList;
+
+  const cleanTitle = (serviceTitle || '').trim();
+  if (!cleanTitle) return servicesList[0]?.priceFrom || 1800;
+
+  // 1. Точное совпадение с услугой из прайс-листа
+  const matchedService = servicesList.find(
+    (s) => s.title.trim().toLowerCase() === cleanTitle.toLowerCase()
+  );
+  if (matchedService) {
+    return Math.max(0, Math.round(Number(matchedService.priceFrom) || 0));
+  }
+
+  // 2. Частичное вхождение названия услуги из прайс-листа
+  const partialService = servicesList.find(
+    (s) =>
+      cleanTitle.toLowerCase().includes(s.title.trim().toLowerCase()) ||
+      s.title.trim().toLowerCase().includes(cleanTitle.toLowerCase())
+  );
+  if (partialService) {
+    return Math.max(0, Math.round(Number(partialService.priceFrom) || 0));
+  }
+
+  // 3. Совпадение с пакетной программой калькулятора (включая суффиксы доп. опций)
+  const matchedPkg = CALCULATOR_PACKAGES.find(
+    (p) =>
+      cleanTitle.toLowerCase() === p.title.toLowerCase() ||
+      cleanTitle.toLowerCase().startsWith(p.title.toLowerCase())
+  );
+  if (matchedPkg) {
+    const speciesMultiplier =
+      petSpecies === 'Собака' ? 1.25 : petSpecies === 'Грызун' ? 0.85 : 1.0;
+    const baseAdjusted =
+      Math.round((matchedPkg.basePrice * speciesMultiplier) / 50) * 50;
+    const homeVisitAddon = cleanTitle.includes('Выезд на дом') ? 1500 : 0;
+    const expressLabAddon = cleanTitle.includes('Экспресс-лаборатория CITO')
+      ? 600
+      : 0;
+    return baseAdjusted + homeVisitAddon + expressLabAddon;
+  }
+
+  // 4. Экстренный выезд бригады на дом
+  if (cleanTitle.toLowerCase().includes('экстренный выезд')) {
+    return 3500;
+  }
+
+  return servicesList[0]?.priceFrom || 1800;
+}
+
+/**
+ * Гарантирует строго числовую стоимость записи и синхронизирует её с прайс-листом,
+ * если цена не задана или услуга входит в прайс-лист.
+ */
+export function resolveAppointmentPrice(
+  record: Partial<AppointmentRecord>,
+  servicesList: ServiceItem[] = SERVICES_DATA,
+  forceCatalogSync = false
+): number {
+  const catalogPrice = resolveServicePriceByTitle(
+    record.serviceTitle || '',
+    record.petSpecies,
+    servicesList
+  );
+
+  if (forceCatalogSync) {
+    return catalogPrice;
+  }
+
+  const rawPrice = Number(record.estimatedPrice);
+  if (Number.isFinite(rawPrice) && rawPrice > 0) {
+    // Если услуга точно совпадает с базовой позицией прайса (не калькулятор с возрастным коэффициентом),
+    // возвращаем актуальную цену из прайс-листа, чтобы исключить расхождения
+    const directService = servicesList.find(
+      (s) =>
+        s.title.trim().toLowerCase() ===
+        (record.serviceTitle || '').trim().toLowerCase()
+    );
+    if (directService) {
+      return Math.max(0, Math.round(Number(directService.priceFrom) || 0));
+    }
+    return Math.round(rawPrice);
+  }
+
+  return catalogPrice;
+}
+
 export const INITIAL_APPOINTMENTS_DATA: AppointmentRecord[] = [
   {
     id: 'LP-849102',
     createdAt: '09:15',
     ownerName: 'Марина Ковалева',
     phone: '+7 (916) 442-18-90',
-    email: 'm.kovaleva@yandex.ru',
     petSpecies: 'Собака',
     petName: 'Ричард',
     serviceTitle: 'Ежегодный комплексный чек-ап «Здоровый питомец»',
@@ -579,7 +820,6 @@ export const INITIAL_APPOINTMENTS_DATA: AppointmentRecord[] = [
     isEmergency: false,
     status: 'Подтверждена',
     notes: 'Золотистый ретривер, 4 года. Голодная диета соблюдена, нужен забор биохимии.',
-    senderAliasEmail: 'LapaPomochu@gmail.com',
     doctorRecommendation:
       'Подтвержден плановый чек-ап. Пожалуйста, сохраняйте голодную диету 8 часов перед забором венозной крови, воду можно давать без ограничений.',
   },
@@ -588,7 +828,6 @@ export const INITIAL_APPOINTMENTS_DATA: AppointmentRecord[] = [
     createdAt: '10:40',
     ownerName: 'Александр Громов',
     phone: '+7 (926) 805-71-22',
-    email: 'a.gromov.it@gmail.com',
     petSpecies: 'Кошка',
     petName: 'Марсель',
     serviceTitle: 'Кардиологический скрининг (ЭхоКГ + ЭКГ)',
@@ -598,14 +837,12 @@ export const INITIAL_APPOINTMENTS_DATA: AppointmentRecord[] = [
     isEmergency: false,
     status: 'Подтверждена',
     notes: 'Шотландский вислоухий, 9 лет. Скрининг перед плановой чисткой зубов.',
-    senderAliasEmail: 'LapaPomochu@gmail.com',
   },
   {
     id: 'LP-849208',
     createdAt: '12:05',
     ownerName: 'Екатерина Белова',
     phone: '+7 (903) 519-64-11',
-    email: 'belova.msu@mail.ru',
     petSpecies: 'Грызун',
     petName: 'Пончик',
     serviceTitle: 'Ультразвуковая стоматология и санация',
@@ -615,14 +852,12 @@ export const INITIAL_APPOINTMENTS_DATA: AppointmentRecord[] = [
     isEmergency: false,
     status: 'Новая',
     notes: 'Карликовый кролик, контрольный осмотр резцов и щечных зубов.',
-    senderAliasEmail: 'LapaPomochu@gmail.com',
   },
   {
     id: 'LP-849274',
     createdAt: '14:22',
     ownerName: 'Игорь Савельев',
     phone: '+7 (985) 730-19-45',
-    email: 'i.savelyev@gmail.com',
     petSpecies: 'Собака',
     petName: 'Луна',
     serviceTitle: 'Эндоскопическая хирургия и ортопедия',
@@ -632,7 +867,6 @@ export const INITIAL_APPOINTMENTS_DATA: AppointmentRecord[] = [
     isEmergency: false,
     status: 'Завершена',
     notes: 'Вельш-корги, плановая лапароскопия прошла успешно, выписана домой.',
-    senderAliasEmail: 'LapaPomochu@gmail.com',
     doctorRecommendation:
       'Операция прошла штатно, швы внутрикожные саморассасывающиеся. Рекомендовано: защитная попона 7 дней, обработка хлоргексидином 1 раз в день, контрольный осмотр через 10 суток.',
   },
@@ -641,34 +875,187 @@ export const INITIAL_APPOINTMENTS_DATA: AppointmentRecord[] = [
     createdAt: '16:50',
     ownerName: 'Ольга Романова',
     phone: '+7 (915) 288-03-67',
-    email: 'olga.romanova@inbox.ru',
     petSpecies: 'Кошка',
     petName: 'Симба',
     serviceTitle: 'Экстренный выезд бригады на дом (за 30 минут)',
     doctorName: 'Морозов Дмитрий Игоревич',
     preferredDate: '2026-10-19 в 19:00',
-    estimatedPrice: 3900,
+    estimatedPrice: 3500,
     isEmergency: true,
     status: 'Новая',
     notes: 'Отказ от корма со вчерашнего вечера, нужен экспресс-анализ крови и УЗИ.',
-    senderAliasEmail: 'LapaPomochu@gmail.com',
   },
   {
     id: 'LP-849390',
     createdAt: '18:10',
     ownerName: 'Денис Морозов',
     phone: '+7 (964) 612-90-08',
-    email: 'denis.m@yandex.ru',
     petSpecies: 'Собака',
     petName: 'Бруно',
     serviceTitle: 'Комплексная вакцинация и чипирование',
     doctorName: 'Дежурный специалист клиники',
     preferredDate: '2026-10-20 в 11:00',
-    estimatedPrice: 2500,
+    estimatedPrice: 2200,
     isEmergency: false,
     status: 'Отменена',
     notes: 'Владелец попросил перенести визит на следующую неделю из-за командировки.',
-    senderAliasEmail: 'LapaPomochu@gmail.com',
+  },
+  {
+    id: 'LP-849412',
+    createdAt: '19:05',
+    ownerName: 'Артём Соколов',
+    phone: '+7 (925) 341-82-19',
+    petSpecies: 'Собака',
+    petName: 'Рекс',
+    serviceTitle: 'УЗИ экспертного класса и экспресс-анализы',
+    doctorName: 'Морозов Дмитрий Игоревич',
+    preferredDate: '2026-10-20 в 13:00',
+    estimatedPrice: 2400,
+    isEmergency: false,
+    status: 'Подтверждена',
+    notes: 'Немецкая овчарка, 5 лет. Контрольное УЗИ брюшной полости и биохимия крови.',
+  },
+  {
+    id: 'LP-849455',
+    createdAt: '19:40',
+    ownerName: 'Виктория Орлова',
+    phone: '+7 (916) 774-59-03',
+    petSpecies: 'Кошка',
+    petName: 'Мята',
+    serviceTitle: 'Терапия и первичный клинический прием',
+    doctorName: 'Волкова Елена Сергеевна',
+    preferredDate: '2026-10-20 в 15:00',
+    estimatedPrice: 1800,
+    isEmergency: false,
+    status: 'Новая',
+    notes: 'Абиссинская кошка, 2 года. Профилактический осмотр перед дачным сезоном.',
+  },
+  {
+    id: 'LP-849489',
+    createdAt: '20:15',
+    ownerName: 'Павел Кузнецов',
+    phone: '+7 (905) 618-44-72',
+    petSpecies: 'Грызун',
+    petName: 'Шустрик',
+    serviceTitle: 'Комплексная вакцинация и чипирование',
+    doctorName: 'Соколова Анна Павловна',
+    preferredDate: '2026-10-20 в 17:00',
+    estimatedPrice: 2200,
+    isEmergency: false,
+    status: 'Подтверждена',
+    notes: 'Декоративный кролик, 1 год. Плановая вакцинация и оформление паспорта.',
   },
 ];
 
+const RANDOM_CLIENTS_POOL: Array<{
+  ownerName: string;
+  phone: string;
+  petSpecies: 'Кошка' | 'Собака' | 'Грызун';
+  petName: string;
+  notes: string;
+}> = [
+  {
+    ownerName: 'Наталья Веденеева',
+    phone: '+7 (916) 902-45-18',
+    petSpecies: 'Кошка',
+    petName: 'Бусинка',
+    notes: 'Британская кошка, 3 года. Плановый осмотр и консультация по рациону.',
+  },
+  {
+    ownerName: 'Максим Лебедев',
+    phone: '+7 (926) 418-73-90',
+    petSpecies: 'Собака',
+    petName: 'Чарли',
+    notes: 'Французский бульдог, 2 года. Проверка сердца и общий анализ крови.',
+  },
+  {
+    ownerName: 'Светлана Миронова',
+    phone: '+7 (903) 755-12-64',
+    petSpecies: 'Грызун',
+    petName: 'Орешек',
+    notes: 'Морская свинка, 1.5 года. Осмотр ратолога и коррекция коготков.',
+  },
+  {
+    ownerName: 'Сергей Воронцов',
+    phone: '+7 (985) 239-61-07',
+    petSpecies: 'Собака',
+    petName: 'Тайсон',
+    notes: 'Лабрадор, 6 лет. УЗИ брюшной полости натощак.',
+  },
+  {
+    ownerName: 'Алина Дорофеева',
+    phone: '+7 (915) 840-29-51',
+    petSpecies: 'Кошка',
+    petName: 'Оливия',
+    notes: 'Мейн-кун, 4 года. Кардиологический скрининг ЭхоКГ.',
+  },
+  {
+    ownerName: 'Роман Захаров',
+    phone: '+7 (964) 511-38-22',
+    petSpecies: 'Кошка',
+    petName: 'Тигра',
+    notes: 'Домашняя кошка, 5 лет. Ежегодная вакцинация с отметкой в ветпаспорте.',
+  },
+];
+
+/**
+ * Генерирует новую реалистичную тестовую заявку от случайного клиента с синхронизированной ценой из прайса.
+ */
+export function createRandomClientAppointment(
+  servicesList: ServiceItem[] = SERVICES_DATA,
+  doctorsList: DoctorProfile[] = DOCTORS_DATA,
+  indexSeed = Math.floor(Math.random() * 1000)
+): AppointmentRecord {
+  const client = RANDOM_CLIENTS_POOL[indexSeed % RANDOM_CLIENTS_POOL.length];
+  const service =
+    servicesList[indexSeed % Math.max(1, servicesList.length)] || SERVICES_DATA[0];
+  const doctor =
+    client.petSpecies === 'Грызун'
+      ? doctorsList.find((d) => d.name.includes('Соколова')) ||
+        doctorsList[indexSeed % Math.max(1, doctorsList.length)] ||
+        DOCTORS_DATA[0]
+      : doctorsList[indexSeed % Math.max(1, doctorsList.length)] || DOCTORS_DATA[0];
+
+  const slots = ['09:00', '11:00', '13:00', '15:00', '17:00', '19:00', '21:00'];
+  const slot = slots[indexSeed % slots.length];
+  const futureDate = new Date(Date.now() + ((indexSeed % 5) + 1) * 86400000)
+    .toISOString()
+    .split('T')[0];
+
+  return {
+    id: `LP-${Math.floor(100000 + Math.random() * 900000)}`,
+    createdAt: new Date().toLocaleTimeString('ru-RU', {
+      hour: '2-digit',
+      minute: '2-digit',
+    }),
+    ownerName: client.ownerName,
+    phone: client.phone,
+    petSpecies: client.petSpecies,
+    petName: client.petName,
+    serviceTitle: service.title,
+    doctorName: doctor.name,
+    preferredDate: `${futureDate} в ${slot}`,
+    estimatedPrice: resolveServicePriceByTitle(
+      service.title,
+      client.petSpecies,
+      servicesList
+    ),
+    isEmergency: false,
+    status: indexSeed % 2 === 0 ? 'Подтверждена' : 'Новая',
+    notes: client.notes,
+  };
+}
+
+/**
+ * Генерирует пакет тестовых заявок от случайных клиентов.
+ */
+export function createRandomClientAppointments(
+  count = 3,
+  servicesList: ServiceItem[] = SERVICES_DATA,
+  doctorsList: DoctorProfile[] = DOCTORS_DATA
+): AppointmentRecord[] {
+  const baseSeed = Math.floor(Math.random() * 100);
+  return Array.from({ length: count }, (_, idx) =>
+    createRandomClientAppointment(servicesList, doctorsList, baseSeed + idx)
+  );
+}

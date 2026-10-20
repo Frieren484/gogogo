@@ -1,4 +1,8 @@
-import { AppointmentRecord, CLINIC_INFO } from '../data/clinicData';
+import {
+  AppointmentRecord,
+  CLINIC_INFO,
+  resolveAppointmentPrice,
+} from '../data/clinicData';
 
 export interface PreparationGuide {
   categoryTitle: string;
@@ -82,6 +86,7 @@ export function getPreparationAdvice(
  */
 export function downloadAppointmentVoucher(record: AppointmentRecord): void {
   const prep = getPreparationAdvice(record.serviceTitle, record.isEmergency);
+  const priceRub = resolveAppointmentPrice(record);
 
   const lines: string[] = [
     '============================================================',
@@ -96,18 +101,13 @@ export function downloadAppointmentVoucher(record: AppointmentRecord): void {
     '--- ДАННЫЕ ПАЦИЕНТА И ВЛАДЕЛЬЦА ----------------------------',
     `Владелец:            ${record.ownerName}`,
     `Телефон:             ${record.phone}`,
-    `Email для связи:     ${record.email || 'Не указан'}`,
     `Пациент:             ${record.petSpecies} «${record.petName}»`,
     '',
     '--- ДЕТАЛИ ПРИЕМА ------------------------------------------',
     `Выбранная услуга:    ${record.serviceTitle}`,
     `Лечащий специалист:  ${record.doctorName}`,
     `Дата и время визита: ${record.preferredDate}`,
-    `Расчетная стоимость: ${
-      record.estimatedPrice
-        ? `${record.estimatedPrice.toLocaleString('ru-RU')} ₽`
-        : 'По прайс-листу клиники'
-    }`,
+    `Расчетная стоимость: ${priceRub.toLocaleString('ru-RU')} ₽`,
     `Примечание к записи: ${record.notes || 'Без дополнительных примечаний'}`,
     '',
     `--- ПАМЯТКА ПОДГОТОВКИ (${prep.categoryTitle.toUpperCase()}) ---`,
@@ -127,7 +127,6 @@ export function downloadAppointmentVoucher(record: AppointmentRecord): void {
     '--- КОНТАКТЫ КЛИНИКИ ---------------------------------------',
     `Адрес:               г. ${CLINIC_INFO.city}, ${CLINIC_INFO.address}`,
     `Круглосуточный тел.: ${CLINIC_INFO.phoneDisplay}`,
-    `Официальная почта:   ${CLINIC_INFO.publicAliasEmail}`,
     `График работы:       ${CLINIC_INFO.schedule}`,
     '============================================================'
   );

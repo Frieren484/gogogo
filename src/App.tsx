@@ -1,385 +1,1084 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Activity,
-  Ambulance,
+  AlertTriangle,
   ArrowRight,
+  Award,
   Calculator,
-  CalendarCheck,
+  Calendar,
   Check,
+  CheckCircle2,
   ChevronDown,
   Clock,
-  FileCheck2,
   HeartHandshake,
+  LogIn,
   MapPin,
   Menu,
-  Microscope,
+  MessageSquarePlus,
   Navigation,
   PawPrint,
   Phone,
+  PhoneCall,
+  Search,
   ShieldCheck,
   Sparkles,
-  Stethoscope,
   Star,
-  Syringe,
+  Stethoscope,
+  UserCheck,
   X,
 } from 'lucide-react';
 import {
   AppointmentRecord,
+  AppointmentStatus,
   CALCULATOR_PACKAGES,
   CLINIC_INFO,
+  createRandomClientAppointments,
   DoctorProfile,
   DOCTORS_DATA,
+  EMERGENCY_SYMPTOMS,
   FAQ_DATA,
+  getReviewSpeciesCategory,
   INITIAL_APPOINTMENTS_DATA,
-  PetAge,
   PET_AGE_CONFIG,
-  PetType,
   PET_TYPES_CONFIG,
+  PetAge,
+  PetType,
+  resolveAppointmentPrice,
+  resolveServicePriceByTitle,
+  ReviewSpeciesFilter,
   ServiceCategory,
   ServiceItem,
   SERVICES_DATA,
+  TestimonialItem,
   TESTIMONIALS_DATA,
 } from './data/clinicData';
-import { SmartImage } from './components/SmartImage';
 import { BookingModal, BookingPrefill } from './components/BookingModal';
 import { EmergencyModal } from './components/EmergencyModal';
 import { SavedAppointmentsModal } from './components/SavedAppointmentsModal';
-import { GoogleDriveSection } from './components/GoogleDriveSection';
-import { AuthModal } from './components/AuthModal';
 import { AdminDashboard } from './components/AdminDashboard';
+import { AuthModal } from './components/AuthModal';
 import {
   AppUserProfile,
   filterAppointmentsForUser,
+  getRegisteredAccounts,
   getStoredUserProfile,
-  signOutAccount,
+  saveUserProfile,
+  syncPetProfilesFromCloud,
+  syncRegisteredAccountsFromCloud,
 } from './services/authService';
-import { ensureInitialTestEmailSentToTanks8015 } from './services/emailService';
+import {
+  forceSyncAllCollectionsToCloud,
+  startClinicFirestoreSync,
+  syncAppointmentsToCloud,
+  syncDoctorsToCloud,
+  syncReviewsToCloud,
+  syncServicesToCloud,
+} from './services/firestoreService';
 
-const STORAGE_KEY = 'lapa_pomoshchi_appointments_v2';
-const SERVICES_STORAGE_KEY = 'lapa_pomoshchi_services_v1';
-const DOCTORS_STORAGE_KEY = 'lapa_pomoshchi_doctors_v1';
+const STORAGE_KEY = 'lapa_pomoshchi_appointments_v6';
+const REVIEWS_STORAGE_KEY = 'lapa_pomoshchi_reviews_v3';
+const SERVICES_STORAGE_KEY = 'lapa_pomoshchi_services_v2';
+const DOCTORS_STORAGE_KEY = 'lapa_pomoshchi_doctors_v2';
 
-export default function App() {
-  // User Profile & RBAC Role State
+const HERO_STATS = [
+  {
+    value: '24/7',
+    label: 'Стационар и хирургия',
+    detail: 'Дежурная реанимационная бригада без выходных',
+  },
+  {
+    value: '15 мин',
+    label: 'Экспресс-анализы',
+    detail: 'Собственная лаборатория IDEXX прямо во время приема',
+  },
+  {
+    value: '99.4%',
+    label: 'Успешных операций',
+    detail: 'Газовый наркоз Севофлуран и кардиомониторинг',
+  },
+  {
+    value: '30 мин',
+    label: 'Выезд по Москве',
+    detail: 'Оборудованный ветмобиль с УЗИ и ЭКГ',
+  },
+];
+
+const TRUST_BADGES = [
+  {
+    title: 'Прием без стресса (Fear Free)',
+    description:
+      'Раздельные зоны ожидания и стационары для кошек, собак и мелких грызунов без пересечения запахов.',
+  },
+  {
+    title: 'Прозрачная смета до начала лечения',
+    description:
+      'Никаких скрытых манипуляций: фиксированные чек-апы и согласование каждого шага по прайс-листу.',
+  },
+  {
+    title: 'Узкопрофильные специалисты',
+    description:
+      'В штате работают хирург-эндоскопист, кардиолог, реаниматолог и профильный ратолог по грызунам.',
+  },
+  {
+    title: 'Безопасная газовая анестезия',
+    description:
+      'Предоперационное ЭхоКГ сердца и индивидуальный анестезиолог на каждой процедуре.',
+  },
+];
+
+export function App() {
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // Role-Based Auth Session State
   const [currentUser, setCurrentUser] = useState<AppUserProfile>(() =>
     getStoredUserProfile()
   );
   const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login');
+  const [authReasonMessage, setAuthReasonMessage] = useState<string | undefined>(
+    undefined
+  );
 
-  // Navigation & Modals State
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [bookingModalOpen, setBookingModalOpen] = useState(false);
-  const [bookingPrefill, setBookingPrefill] = useState<BookingPrefill | null>(null);
-  const [pendingBookingForAuth, setPendingBookingForAuth] = useState<{
-    pending: boolean;
-    prefill: BookingPrefill | null;
-  }>({ pending: false, prefill: null });
-  const [pendingSavedModalForAuth, setPendingSavedModalForAuth] = useState(false);
-  const [emergencyModalOpen, setEmergencyModalOpen] = useState(false);
-  const [savedModalOpen, setSavedModalOpen] = useState(false);
-  const [toastNotice, setToastNotice] = useState<string>('');
+  // Admin CRM Modal State
+  const [adminDashboardOpen, setAdminDashboardOpen] = useState(false);
 
-  // Appointments persisted in localStorage (pre-populated with 6 realistic records if empty)
-  const [appointments, setAppointments] = useState<AppointmentRecord[]>(() => {
+  // Toast message
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage((prev) => (prev === msg ? null : prev));
+    }, 4500);
+  };
+
+  // Editable Dynamic Services Catalog
+  const [servicesList, setServicesList] = useState<ServiceItem[]>(() => {
     try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
+      const raw = localStorage.getItem(SERVICES_STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {
+      // fallback
+    }
+    return SERVICES_DATA;
+  });
+
+  // Editable Dynamic Doctors Roster
+  const [doctorsList, setDoctorsList] = useState<DoctorProfile[]>(() => {
+    try {
+      const raw = localStorage.getItem(DOCTORS_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {
+      // fallback
+    }
+    return DOCTORS_DATA;
+  });
+
+  // Services filter & search state
+  const [activeCategory, setActiveCategory] = useState<ServiceCategory>('all');
+  const [serviceSearch, setServiceSearch] = useState('');
+
+  // Calculator state
+  const [calcPetType, setCalcPetType] = useState<PetType>('dog');
+  const [calcPetAge, setCalcPetAge] = useState<PetAge>('adult');
+  const [calcPackageId, setCalcPackageId] = useState<string>(
+    CALCULATOR_PACKAGES[0].id
+  );
+  const [calcHomeVisit, setCalcHomeVisit] = useState(false);
+  const [calcExpressLab, setCalcExpressLab] = useState(false);
+
+  // First aid & FAQ tabs state
+  const [activeSymptomId, setActiveSymptomId] = useState<string>(
+    EMERGENCY_SYMPTOMS[0].id
+  );
+  const [openFaqId, setOpenFaqId] = useState<string>(FAQ_DATA[0].id);
+
+  // Modals state
+  const [bookingModalOpen, setBookingModalOpen] = useState(false);
+  const [bookingPrefill, setBookingPrefill] = useState<BookingPrefill | null>(
+    null
+  );
+  const [emergencyModalOpen, setEmergencyModalOpen] = useState(false);
+  const [savedAppointmentsModalOpen, setSavedAppointmentsModalOpen] =
+    useState(false);
+
+  // Quick inline hero callback bar state
+  const [quickPhone, setQuickPhone] = useState('');
+  const [quickPetType, setQuickPetType] = useState('Собака');
+  const [quickSentBanner, setQuickSentBanner] = useState<string | null>(null);
+
+  // Persistent Appointments State (with guaranteed numeric prices synced to catalog)
+  const [appointments, setAppointments] = useState<AppointmentRecord[]>(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as AppointmentRecord[];
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
+          return parsed.map((item) => ({
+            ...item,
+            estimatedPrice: resolveAppointmentPrice(item, SERVICES_DATA),
+          }));
         }
       }
     } catch {
       // ignore storage errors
     }
-    return INITIAL_APPOINTMENTS_DATA;
+    return INITIAL_APPOINTMENTS_DATA.map((item) => ({
+      ...item,
+      estimatedPrice: resolveAppointmentPrice(item, SERVICES_DATA),
+    }));
   });
 
-  // Editable Services persisted in localStorage
-  const [services, setServices] = useState<ServiceItem[]>(() => {
+  // Persistent Reviews State + Add Review Modal State
+  const [reviews, setReviews] = useState<TestimonialItem[]>(() => {
     try {
-      const raw = window.localStorage.getItem(SERVICES_STORAGE_KEY);
+      const raw = localStorage.getItem(REVIEWS_STORAGE_KEY);
       if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        const parsed = JSON.parse(raw) as TestimonialItem[];
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const existingIds = new Set(parsed.map((r) => r.id));
+          const missingDefaults = TESTIMONIALS_DATA.filter(
+            (def) => !existingIds.has(def.id)
+          );
+          return [...parsed, ...missingDefaults];
+        }
       }
     } catch {
       // ignore
     }
-    return SERVICES_DATA;
+    return TESTIMONIALS_DATA;
   });
 
-  // Editable Doctors persisted in localStorage
-  const [doctors, setDoctors] = useState<DoctorProfile[]>(() => {
-    try {
-      const raw = window.localStorage.getItem(DOCTORS_STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch {
-      // ignore
-    }
-    return DOCTORS_DATA;
-  });
+  const [reviewSpeciesFilter, setReviewSpeciesFilter] =
+    useState<ReviewSpeciesFilter>('all');
+  const [reviewFormOpen, setReviewFormOpen] = useState(false);
+  const [newReviewOwner, setNewReviewOwner] = useState('');
+  const [newReviewPetName, setNewReviewPetName] = useState('');
+  const [newReviewPetBreed, setNewReviewPetBreed] = useState('');
+  const [newReviewService, setNewReviewService] = useState(
+    SERVICES_DATA[0].title
+  );
+  const [newReviewOutcome, setNewReviewOutcome] = useState('');
+  const [newReviewStory, setNewReviewStory] = useState('');
 
+  // Save to localStorage on change
   useEffect(() => {
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(appointments));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(appointments));
     } catch {
-      // ignore
+      // ignore storage errors
     }
   }, [appointments]);
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(SERVICES_STORAGE_KEY, JSON.stringify(services));
+      localStorage.setItem(REVIEWS_STORAGE_KEY, JSON.stringify(reviews));
     } catch {
       // ignore
     }
-  }, [services]);
+  }, [reviews]);
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(DOCTORS_STORAGE_KEY, JSON.stringify(doctors));
+      localStorage.setItem(SERVICES_STORAGE_KEY, JSON.stringify(servicesList));
     } catch {
       // ignore
     }
-  }, [doctors]);
+  }, [servicesList]);
 
-  const showToastNotice = (message: string) => {
-    setToastNotice(message);
-    window.setTimeout(() => {
-      setToastNotice((current) => (current === message ? '' : current));
-    }, 6000);
-  };
-
-  // Автоматическая тестовая отправка письма с почты клиники на tanks8015@gmail.com при запуске
   useEffect(() => {
-    void ensureInitialTestEmailSentToTanks8015().then((result) => {
-      if (result) {
-        showToastNotice(result.toastMessage);
-      }
+    try {
+      localStorage.setItem(DOCTORS_STORAGE_KEY, JSON.stringify(doctorsList));
+    } catch {
+      // ignore
+    }
+  }, [doctorsList]);
+
+  // Real-Time Firestore Cloud Synchronization
+  useEffect(() => {
+    const unsubscribe = startClinicFirestoreSync({
+      getInitialAppointments: () => appointments,
+      getInitialServices: () => servicesList,
+      getInitialDoctors: () => doctorsList,
+      getInitialReviews: () => reviews,
+      getInitialUsers: () => getRegisteredAccounts(),
+      onAppointmentsUpdate: (cloudAppointments) => {
+        setAppointments(
+          cloudAppointments.map((item) => ({
+            ...item,
+            estimatedPrice: resolveAppointmentPrice(item, servicesList),
+          }))
+        );
+      },
+      onServicesUpdate: (cloudServices) => {
+        setServicesList(cloudServices);
+      },
+      onDoctorsUpdate: (cloudDoctors) => {
+        setDoctorsList(cloudDoctors);
+      },
+      onReviewsUpdate: (cloudReviews) => {
+        setReviews(cloudReviews);
+      },
+      onUsersUpdate: (cloudUsers) => {
+        syncRegisteredAccountsFromCloud(cloudUsers);
+      },
+      onPetProfilesUpdate: (profilesMap) => {
+        syncPetProfilesFromCloud(profilesMap);
+      },
     });
+
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
-  // Строгая RBAC-фильтрация записей для текущего пользователя
+  // Filtered services
+  const filteredServices = useMemo(() => {
+    return servicesList.filter((service) => {
+      const matchesCategory =
+        activeCategory === 'all' || service.category === activeCategory;
+      const query = serviceSearch.trim().toLowerCase();
+      const matchesQuery =
+        !query ||
+        service.title.toLowerCase().includes(query) ||
+        service.description.toLowerCase().includes(query) ||
+        service.included.some((item) => item.toLowerCase().includes(query));
+      return matchesCategory && matchesQuery;
+    });
+  }, [servicesList, activeCategory, serviceSearch]);
+
+  // Calculator totals
+  const calculatorSummary = useMemo(() => {
+    const petConfig = PET_TYPES_CONFIG[calcPetType];
+    const ageConfig = PET_AGE_CONFIG[calcPetAge];
+    const selectedPkg =
+      CALCULATOR_PACKAGES.find((p) => p.id === calcPackageId) ||
+      CALCULATOR_PACKAGES[0];
+
+    const baseAdjusted =
+      Math.round(
+        (selectedPkg.basePrice * petConfig.multiplier * ageConfig.multiplier) /
+          50
+      ) * 50;
+    const homeAddon = calcHomeVisit ? 1500 : 0;
+    const expressAddon = calcExpressLab ? 600 : 0;
+    const finalTotal = baseAdjusted + homeAddon + expressAddon;
+
+    const fullServiceTitle = [
+      selectedPkg.title,
+      calcHomeVisit ? 'Выезд на дом' : '',
+      calcExpressLab ? 'Экспресс-лаборатория CITO' : '',
+    ]
+      .filter(Boolean)
+      .join(' + ');
+
+    return {
+      petConfig,
+      ageConfig,
+      selectedPkg,
+      baseAdjusted,
+      homeAddon,
+      expressAddon,
+      finalTotal,
+      fullServiceTitle,
+    };
+  }, [calcPetType, calcPetAge, calcPackageId, calcHomeVisit, calcExpressLab]);
+
+  // Auth Handlers
+  const handleUserChanged = (user: AppUserProfile) => {
+    setCurrentUser(user);
+    saveUserProfile(user);
+    if (user.role === 'admin' && user.login === '1') {
+      setAdminDashboardOpen(true);
+    }
+  };
+
+  // Open booking modal with context
+  const openBookingWithContext = (options?: BookingPrefill) => {
+    if (currentUser.authSource === 'guest') {
+      setAuthReasonMessage(
+        'Для оформления онлайн-записи на прием войдите через аккаунт Google.'
+      );
+      setAuthModalOpen(true);
+      return;
+    }
+    setBookingPrefill(options || null);
+    setBookingModalOpen(true);
+  };
+
+  const handleBookingCreated = (newRecord: AppointmentRecord) => {
+    const normalized: AppointmentRecord = {
+      ...newRecord,
+      estimatedPrice: resolveAppointmentPrice(newRecord, servicesList),
+      ownerUid: newRecord.ownerUid || currentUser.uid,
+    };
+
+    setAppointments((prev) => {
+      const next = [normalized, ...prev];
+      void syncAppointmentsToCloud(next, prev, servicesList);
+      return next;
+    });
+  };
+
+  const handleCreateManualAdminAppointment = (
+    data: Omit<AppointmentRecord, 'id' | 'createdAt'>
+  ) => {
+    const now = new Date();
+    const formattedTime = now.toLocaleTimeString('ru-RU', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    const numericPrice =
+      typeof data.estimatedPrice === 'number' &&
+      !Number.isNaN(data.estimatedPrice) &&
+      data.estimatedPrice > 0
+        ? Math.round(data.estimatedPrice)
+        : resolveServicePriceByTitle(
+            data.serviceTitle,
+            data.petSpecies,
+            servicesList
+          );
+
+    const newRecord: AppointmentRecord = {
+      ...data,
+      estimatedPrice: numericPrice,
+      id: `LP-${Math.floor(100000 + Math.random() * 900000)}`,
+      createdAt: formattedTime,
+    };
+
+    setAppointments((prev) => {
+      const next = [newRecord, ...prev];
+      void syncAppointmentsToCloud(next, prev, servicesList);
+      return next;
+    });
+  };
+
+  const handleGenerateRandomAppointments = (count = 3): AppointmentRecord[] => {
+    const generated = createRandomClientAppointments(
+      count,
+      servicesList,
+      doctorsList
+    );
+    setAppointments((prev) => {
+      const next = [...generated, ...prev];
+      void syncAppointmentsToCloud(next, prev, servicesList);
+      return next;
+    });
+    return generated;
+  };
+
+  const handleQuickCallbackSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (currentUser.authSource === 'guest') {
+      setAuthReasonMessage(
+        'Для быстрой записи войдите через Google (или используйте вход сотрудника).'
+      );
+      setAuthModalOpen(true);
+      return;
+    }
+
+    const digits = quickPhone.replace(/\D/g, '');
+    if (digits.length < 6) return;
+
+    const defaultServiceTitle =
+      servicesList[0]?.title || 'Терапия и первичный клинический прием';
+    const created: AppointmentRecord = {
+      id: `LP-${Math.floor(100000 + Math.random() * 900000)}`,
+      createdAt: new Date().toLocaleTimeString('ru-RU', {
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+      ownerName: currentUser.displayName,
+      phone: quickPhone.trim(),
+      petSpecies: quickPetType,
+      petName: 'Уточняется по телефону',
+      serviceTitle: defaultServiceTitle,
+      doctorName: 'Дежурный специалист клиники',
+      preferredDate: 'Сегодня, ближайшее окно',
+      estimatedPrice: resolveServicePriceByTitle(
+        defaultServiceTitle,
+        quickPetType,
+        servicesList
+      ),
+      isEmergency: false,
+      status: 'Новая',
+      notes: 'Быстрая запись в 1 клик с первого экрана',
+      ownerUid: currentUser.uid,
+    };
+
+    handleBookingCreated(created);
+    setQuickPhone('');
+    setQuickSentBanner(
+      `Заявка №${created.id} принята! Дежурный регистратор свяжется с вами по номеру ${created.phone} в течение 10 минут.`
+    );
+  };
+
+  const handleCancelAppointment = (id: string) => {
+    setAppointments((prev) => {
+      const next = prev.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              status: 'Отменена',
+              estimatedPrice: resolveAppointmentPrice(item, servicesList),
+            }
+          : item
+      );
+      void syncAppointmentsToCloud(next, prev, servicesList);
+      return next;
+    });
+  };
+
+  const handleDeleteAppointment = (id: string) => {
+    setAppointments((prev) => {
+      const next = prev.filter((item) => item.id !== id);
+      void syncAppointmentsToCloud(next, prev, servicesList);
+      return next;
+    });
+  };
+
+  const handleUpdateAppointmentStatus = (id: string, status: AppointmentStatus) => {
+    setAppointments((prev) => {
+      const next = prev.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              status,
+              estimatedPrice: resolveAppointmentPrice(item, servicesList),
+            }
+          : item
+      );
+      void syncAppointmentsToCloud(next, prev, servicesList);
+      return next;
+    });
+  };
+
+  const handleUpdateAppointmentPrice = (id: string, price: number) => {
+    const cleanPrice = Math.max(0, Math.round(Number(price) || 0));
+    setAppointments((prev) => {
+      const next = prev.map((item) =>
+        item.id === id ? { ...item, estimatedPrice: cleanPrice } : item
+      );
+      void syncAppointmentsToCloud(next, prev, servicesList);
+      return next;
+    });
+  };
+
+  const handleSyncAllAppointmentPrices = (): number => {
+    let updatedCount = 0;
+    setAppointments((prev) => {
+      const next = prev.map((item) => {
+        const syncedPrice = resolveAppointmentPrice(item, servicesList, true);
+        if (Number(item.estimatedPrice) !== syncedPrice) {
+          updatedCount += 1;
+          return {
+            ...item,
+            estimatedPrice: syncedPrice,
+          };
+        }
+        return item;
+      });
+      void syncAppointmentsToCloud(next, prev, servicesList);
+      return next;
+    });
+    return updatedCount;
+  };
+
+  const handleRescheduleAppointment = (id: string, newDate: string) => {
+    setAppointments((prev) => {
+      const next = prev.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              preferredDate: newDate,
+              status: item.status === 'Отменена' ? 'Новая' : item.status,
+              estimatedPrice: resolveAppointmentPrice(item, servicesList),
+            }
+          : item
+      );
+      void syncAppointmentsToCloud(next, prev, servicesList);
+      return next;
+    });
+  };
+
+  const handleUpdateAppointmentNotes = (id: string, notes: string) => {
+    setAppointments((prev) => {
+      const next = prev.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              notes,
+              estimatedPrice: resolveAppointmentPrice(item, servicesList),
+            }
+          : item
+      );
+      void syncAppointmentsToCloud(next, prev, servicesList);
+      return next;
+    });
+  };
+
+  const handleUpdateAppointmentRecommendation = (
+    id: string,
+    doctorRecommendation: string
+  ) => {
+    setAppointments((prev) => {
+      const next = prev.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              doctorRecommendation,
+              estimatedPrice: resolveAppointmentPrice(item, servicesList),
+            }
+          : item
+      );
+      void syncAppointmentsToCloud(next, prev, servicesList);
+      return next;
+    });
+  };
+
+  // Admin Service CRUD (automatically synchronizes prices of matching appointments)
+  const handleSaveService = (service: ServiceItem) => {
+    const cleanService: ServiceItem = {
+      ...service,
+      priceFrom: Math.max(0, Math.round(Number(service.priceFrom) || 0)),
+    };
+
+    const previousService = servicesList.find((s) => s.id === cleanService.id);
+
+    setServicesList((prev) => {
+      const exists = prev.some((s) => s.id === cleanService.id);
+      const next = exists
+        ? prev.map((s) => (s.id === cleanService.id ? cleanService : s))
+        : [...prev, cleanService];
+      void syncServicesToCloud(next, prev);
+      return next;
+    });
+
+    setAppointments((prev) => {
+      const next = prev.map((appt) => {
+        const matchesPreviousTitle =
+          previousService &&
+          appt.serviceTitle.trim().toLowerCase() ===
+            previousService.title.trim().toLowerCase();
+        const matchesNewTitle =
+          appt.serviceTitle.trim().toLowerCase() ===
+          cleanService.title.trim().toLowerCase();
+
+        if (matchesPreviousTitle || matchesNewTitle) {
+          return {
+            ...appt,
+            serviceTitle: cleanService.title,
+            estimatedPrice: cleanService.priceFrom,
+          };
+        }
+        return appt;
+      });
+      void syncAppointmentsToCloud(next, prev, servicesList);
+      return next;
+    });
+  };
+
+  const handleDeleteService = (id: string) => {
+    setServicesList((prev) => {
+      const next = prev.filter((s) => s.id !== id);
+      void syncServicesToCloud(next, prev);
+      return next;
+    });
+  };
+
+  // Admin Doctor CRUD
+  const handleSaveDoctor = (doctor: DoctorProfile) => {
+    setDoctorsList((prev) => {
+      const exists = prev.some((d) => d.id === doctor.id);
+      const next = exists
+        ? prev.map((d) => (d.id === doctor.id ? doctor : d))
+        : [...prev, doctor];
+      void syncDoctorsToCloud(next, prev);
+      return next;
+    });
+  };
+
+  const handleDeleteDoctor = (id: string) => {
+    setDoctorsList((prev) => {
+      const next = prev.filter((d) => d.id !== id);
+      void syncDoctorsToCloud(next, prev);
+      return next;
+    });
+  };
+
+  // Admin Review Moderation
+  const handleDeleteReview = (id: string) => {
+    setReviews((prev) => {
+      const next = prev.filter((r) => r.id !== id);
+      void syncReviewsToCloud(next, prev);
+      return next;
+    });
+  };
+
+  // Reset all demo data to factory defaults
+  const handleResetDemoData = () => {
+    const cleanInitial = INITIAL_APPOINTMENTS_DATA.map((item) => ({
+      ...item,
+      estimatedPrice: resolveAppointmentPrice(item, SERVICES_DATA),
+    }));
+    setAppointments(cleanInitial);
+    setServicesList(SERVICES_DATA);
+    setDoctorsList(DOCTORS_DATA);
+    setReviews(TESTIMONIALS_DATA);
+
+    void forceSyncAllCollectionsToCloud({
+      appointments: cleanInitial,
+      services: SERVICES_DATA,
+      doctors: DOCTORS_DATA,
+      reviews: TESTIMONIALS_DATA,
+    });
+  };
+
+  const handleAddReviewSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (currentUser.authSource === 'guest') {
+      setAuthReasonMessage(
+        'Чтобы оставить отзыв о визите, пожалуйста, войдите через Google.'
+      );
+      setAuthModalOpen(true);
+      return;
+    }
+
+    if (
+      !newReviewOwner.trim() ||
+      !newReviewPetName.trim() ||
+      !newReviewStory.trim()
+    ) {
+      return;
+    }
+
+    const createdReview: TestimonialItem = {
+      id: `rev-${Date.now()}`,
+      ownerName: newReviewOwner.trim(),
+      ownerRole: `Владелец питомца ${newReviewPetName.trim()}`,
+      petName: newReviewPetName.trim(),
+      petBreed: newReviewPetBreed.trim() || 'Домашний питомец',
+      serviceUsed: newReviewService,
+      visitDate: new Date().toLocaleDateString('ru-RU', {
+        month: 'long',
+        year: 'numeric',
+      }),
+      rating: 5,
+      beforeAfterOutcome:
+        newReviewOutcome.trim() ||
+        'Успешный прием, бережная диагностика и понятный план лечения.',
+      story: newReviewStory.trim(),
+      photoUrl:
+        'https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?auto=format&fit=crop&w=600&q=80',
+    };
+
+    setReviews((prev) => {
+      const next = [createdReview, ...prev];
+      void syncReviewsToCloud(next);
+      return next;
+    });
+    setNewReviewOwner('');
+    setNewReviewPetName('');
+    setNewReviewPetBreed('');
+    setNewReviewOutcome('');
+    setNewReviewStory('');
+    setReviewFormOpen(false);
+    showToast('Спасибо! Ваша история выздоровления опубликована на сайте.');
+  };
+
   const userVisibleAppointments = useMemo(
     () => filterAppointmentsForUser(appointments, currentUser),
     [appointments, currentUser]
   );
 
-  const openAuthModal = (
-    mode: 'login' | 'register',
-    keepPendingActions = false
-  ) => {
-    if (!keepPendingActions) {
-      setPendingBookingForAuth({ pending: false, prefill: null });
-      setPendingSavedModalForAuth(false);
-    }
-    setAuthModalMode(mode);
-    setAuthModalOpen(true);
-  };
+  const activeAppointmentsCount = userVisibleAppointments.filter(
+    (a) => a.status !== 'Отменена'
+  ).length;
 
-  const handleUserChanged = (nextUser: AppUserProfile) => {
-    setCurrentUser(nextUser);
-    if (nextUser.authSource !== 'guest') {
-      if (pendingBookingForAuth.pending) {
-        const savedPrefill = pendingBookingForAuth.prefill;
-        setPendingBookingForAuth({ pending: false, prefill: null });
-        setBookingPrefill(savedPrefill);
-        setBookingModalOpen(true);
-      } else if (pendingSavedModalForAuth) {
-        setPendingSavedModalForAuth(false);
-        setSavedModalOpen(true);
-      }
-    }
-  };
+  const activeSymptom =
+    EMERGENCY_SYMPTOMS.find((s) => s.id === activeSymptomId) ??
+    EMERGENCY_SYMPTOMS[0];
 
-  const handleLogoutClick = async () => {
-    const guest = await signOutAccount();
-    setCurrentUser(guest);
-    setPendingBookingForAuth({ pending: false, prefill: null });
-    setPendingSavedModalForAuth(false);
-  };
-
-  const openSavedAppointments = () => {
-    setMobileMenuOpen(false);
-    if (currentUser.authSource === 'guest') {
-      setPendingSavedModalForAuth(true);
-      openAuthModal('login', true);
-      return;
-    }
-    setSavedModalOpen(true);
-  };
-
-  // Services Filter State
-  const [activeCategory, setActiveCategory] = useState<ServiceCategory>('all');
-
-  const filteredServices = useMemo(() => {
-    if (activeCategory === 'all') return services;
-    return services.filter((service) => service.category === activeCategory);
-  }, [activeCategory, services]);
-
-  // Interactive Calculator State
-  const [calcPetType, setCalcPetType] = useState<PetType>('cat');
-  const [calcPetAge, setCalcPetAge] = useState<PetAge>('adult');
-  const [calcPackageId, setCalcPackageId] = useState<string>(CALCULATOR_PACKAGES[0].id);
-  const [calcHomeVisit, setCalcHomeVisit] = useState<boolean>(false);
-  const [calcExpressLab, setCalcExpressLab] = useState<boolean>(false);
-
-  const selectedPackage = useMemo(
-    () =>
-      CALCULATOR_PACKAGES.find((pkg) => pkg.id === calcPackageId) ||
-      CALCULATOR_PACKAGES[0],
-    [calcPackageId]
-  );
-
-  const calculationBreakdown = useMemo(() => {
-    const petMultiplier = PET_TYPES_CONFIG[calcPetType].multiplier;
-    const ageMultiplier = PET_AGE_CONFIG[calcPetAge].multiplier;
-    const adjustedPackagePrice = Math.round(
-      (selectedPackage.basePrice * petMultiplier * ageMultiplier) / 50
-    ) * 50;
-    const homeVisitCost = calcHomeVisit ? 1500 : 0;
-    const expressLabCost = calcExpressLab ? 600 : 0;
-    const total = adjustedPackagePrice + homeVisitCost + expressLabCost;
-
-    return {
-      adjustedPackagePrice,
-      homeVisitCost,
-      expressLabCost,
-      total,
+  const reviewSpeciesCounts = useMemo(() => {
+    const counts = {
+      all: reviews.length,
+      dogs: 0,
+      cats: 0,
+      exotic: 0,
     };
-  }, [calcPetType, calcPetAge, selectedPackage, calcHomeVisit, calcExpressLab]);
-
-  // FAQ Accordion State
-  const [openFaqId, setOpenFaqId] = useState<string>(FAQ_DATA[0].id);
-
-  // Interactive Map Route Tab State
-  const [mapRouteMode, setMapRouteMode] = useState<'metro' | 'car' | 'emergency'>('metro');
-
-  // Handlers
-  const openGeneralBooking = (prefill?: BookingPrefill) => {
-    setMobileMenuOpen(false);
-    if (currentUser.authSource === 'guest') {
-      setPendingBookingForAuth({ pending: true, prefill: prefill || null });
-      openAuthModal('register', true);
-      return;
-    }
-    setBookingPrefill(prefill || null);
-    setBookingModalOpen(true);
-  };
-
-  const handleBookingCreated = (newRecord: AppointmentRecord) => {
-    setAppointments((prev) => [newRecord, ...prev]);
-  };
-
-  const handleCancelAppointment = (id: string) => {
-    setAppointments((prev) => prev.filter((item) => item.id !== id));
-  };
-
-  const handleBookFromCalculator = () => {
-    const addons: string[] = [];
-    if (calcHomeVisit) addons.push('Выезд на дом');
-    if (calcExpressLab) addons.push('Экспресс-лаборатория CITO');
-    const addonSuffix = addons.length > 0 ? ` (${addons.join(', ')})` : '';
-
-    openGeneralBooking({
-      petType: calcPetType,
-      serviceTitle: `${selectedPackage.title}${addonSuffix}`,
-      estimatedPrice: calculationBreakdown.total,
+    reviews.forEach((rev) => {
+      const cat = getReviewSpeciesCategory(rev);
+      counts[cat] += 1;
     });
-  };
+    return counts;
+  }, [reviews]);
+
+  const filteredReviews = useMemo(() => {
+    if (reviewSpeciesFilter === 'all') return reviews;
+    return reviews.filter(
+      (rev) => getReviewSpeciesCategory(rev) === reviewSpeciesFilter
+    );
+  }, [reviews, reviewSpeciesFilter]);
+
+  const isUserAdmin =
+    currentUser.role === 'admin' && currentUser.login === '1';
 
   return (
-    <div className="min-h-screen flex flex-col bg-white text-[#0F2922]">
-      {/* Sticky Header: Strict 3-Zone Top Bar Contract */}
-      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-[#D1EAE4]">
-        <div className="max-w-7xl mx-auto flex items-center justify-between gap-8 px-6 lg:px-8 h-16">
-          {/* Zone 1: Single text element wordmark */}
+    <div className="min-h-screen flex flex-col bg-[#F4FAF8] text-[#0F2922] selection:bg-[#0D9488] selection:text-white">
+      {/* Top Emergency & Address Bar */}
+      <div className="bg-[#0F2922] text-white/90 text-xs border-b border-white/10">
+        <div className="max-w-7xl mx-auto px-6 lg:px-8 py-2.5 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-4 sm:gap-6">
+            <span className="inline-flex items-center gap-2 font-medium text-[#5EEAD4]">
+              <span className="w-2 h-2 rounded-full bg-[#10B981] animate-pulse" />
+              {CLINIC_INFO.schedule}
+            </span>
+            <span className="hidden md:inline-flex items-center gap-1.5 text-white/80">
+              <MapPin className="w-3.5 h-3.5 text-[#5EEAD4]" />
+              {CLINIC_INFO.address}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-4 ml-auto">
+            {isUserAdmin && (
+              <button
+                type="button"
+                onClick={() => setAdminDashboardOpen(true)}
+                className="inline-flex items-center gap-1.5 text-[#5EEAD4] hover:text-white font-bold transition-snappy cursor-pointer bg-white/10 px-2.5 py-1 rounded-md"
+              >
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>Админ-панель ({appointments.length})</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setEmergencyModalOpen(true)}
+              className="inline-flex items-center gap-1.5 text-[#FDBA74] hover:text-white font-semibold transition-snappy cursor-pointer"
+            >
+              <AlertTriangle className="w-3.5 h-3.5 text-[#F97316]" />
+              <span>
+                Экстренный триаж: выезд за {CLINIC_INFO.emergencyDispatchMinutes} мин
+              </span>
+            </button>
+            <a
+              href={`tel:${CLINIC_INFO.phoneRaw}`}
+              className="hidden sm:inline-flex items-center gap-1.5 font-bold text-white hover:text-[#5EEAD4] tabular-nums transition-snappy"
+            >
+              <Phone className="w-3.5 h-3.5 text-[#5EEAD4]" />
+              {CLINIC_INFO.phoneDisplay}
+            </a>
+          </div>
+        </div>
+      </div>
+
+      {/* Global Toast Notification */}
+      {toastMessage && (
+        <div className="bg-[#0D9488] text-white px-6 py-2.5 text-xs font-bold flex items-center justify-between gap-3">
+          <div className="max-w-7xl mx-auto w-full flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              <span>{toastMessage}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setToastMessage(null)}
+              className="text-white/80 hover:text-white cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Sticky Main Header */}
+      <header className="sticky top-0 z-40 bg-[#F4FAF8]/95 backdrop-blur-md border-b border-[#D1EAE4]">
+        <div className="max-w-7xl mx-auto px-6 lg:px-8 h-20 flex items-center justify-between gap-4">
+          {/* Brand Logo */}
           <a
-            href="#top"
-            className="text-xl font-extrabold tracking-tight text-[#0F2922] hover:text-[#0D9488] transition-snappy whitespace-nowrap shrink-0"
+            href="#"
+            className="flex items-center gap-3 group focus:outline-none"
           >
-            Лапа Помощи
+            <div className="w-11 h-11 rounded-xl bg-[#0D9488] text-white flex items-center justify-center shadow-sm group-hover:bg-[#0F766E] transition-snappy">
+              <PawPrint className="w-6 h-6" />
+            </div>
+            <div>
+              <div className="font-extrabold text-lg leading-none text-[#0F2922] tracking-tight">
+                {CLINIC_INFO.name}
+              </div>
+              <div className="text-xs text-[#335249] mt-1 font-medium">
+                Ветеринарный центр · {CLINIC_INFO.city}
+              </div>
+            </div>
           </a>
 
-          {/* Zone 2: 5 concise single-line text navigation links */}
-          <nav
-            aria-label="Основная навигация"
-            className="hidden md:flex items-center gap-7 text-sm font-medium text-[#335249]"
-          >
+          {/* Desktop Navigation */}
+          <nav className="hidden xl:flex items-center gap-6 text-sm font-semibold text-[#335249]">
             <a
               href="#services"
-              className="hover:text-[#0F2922] hover:underline underline-offset-4 transition-snappy whitespace-nowrap shrink-0"
+              className="hover:text-[#0D9488] transition-snappy whitespace-nowrap"
             >
               Услуги и цены
             </a>
             <a
               href="#calculator"
-              className="hover:text-[#0F2922] hover:underline underline-offset-4 transition-snappy whitespace-nowrap shrink-0"
+              className="hover:text-[#0D9488] transition-snappy whitespace-nowrap"
             >
-              Калькулятор
+              Калькулятор чек-апа
             </a>
             <a
               href="#doctors"
-              className="hover:text-[#0F2922] hover:underline underline-offset-4 transition-snappy whitespace-nowrap shrink-0"
+              className="hover:text-[#0D9488] transition-snappy whitespace-nowrap"
             >
-              Врачи
+              Врачи ({doctorsList.length})
             </a>
             <a
               href="#reviews"
-              className="hover:text-[#0F2922] hover:underline underline-offset-4 transition-snappy whitespace-nowrap shrink-0"
+              className="hover:text-[#0D9488] transition-snappy whitespace-nowrap"
             >
-              Отзывы
+              Истории пациентов ({reviews.length})
             </a>
             <a
               href="#contacts"
-              className="hover:text-[#0F2922] hover:underline underline-offset-4 transition-snappy whitespace-nowrap shrink-0"
+              className="hover:text-[#0D9488] transition-snappy whitespace-nowrap"
             >
               Контакты
             </a>
           </nav>
 
-          {/* Zone 3: 1 primary action (+ mobile menu trigger on small screens) */}
-          <div className="flex items-center gap-3 shrink-0">
+          {/* Actions & Role Auth Controls */}
+          <div className="hidden lg:flex items-center gap-2.5 shrink-0">
             <button
               type="button"
-              onClick={() => openGeneralBooking()}
-              className="px-4 py-2 text-xs sm:text-sm font-semibold text-white bg-[#F97316] hover:bg-[#EA580C] rounded-xl transition-snappy whitespace-nowrap shrink-0 cursor-pointer"
+              onClick={() => {
+                setAuthReasonMessage(undefined);
+                setAuthModalOpen(true);
+              }}
+              className={`py-2.5 px-3.5 rounded-xl border text-xs font-bold inline-flex items-center gap-2 transition-snappy whitespace-nowrap cursor-pointer ${
+                isUserAdmin
+                  ? 'bg-[#0F2922] text-white border-[#0F2922] hover:bg-[#1E3F36]'
+                  : currentUser.authSource !== 'guest'
+                  ? 'bg-[#E6F4F1] text-[#0F2922] border-[#0D9488]/40 hover:bg-[#D1EAE4]'
+                  : 'bg-white text-[#0F2922] border-[#D1EAE4] hover:border-[#0D9488]'
+              }`}
+              title="Управление аккаунтом и правами доступа"
             >
-              Записаться на прием
+              {currentUser.authSource !== 'guest' ? (
+                <>
+                  <img
+                    src={currentUser.photoURL}
+                    alt={currentUser.displayName}
+                    className="w-5 h-5 rounded-full object-cover"
+                  />
+                  <span className="max-w-[110px] truncate">
+                    {currentUser.displayName}
+                  </span>
+                  <span
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold uppercase ${
+                      isUserAdmin
+                        ? 'bg-[#0D9488] text-white'
+                        : 'bg-[#0D9488]/15 text-[#0D9488]'
+                    }`}
+                  >
+                    {isUserAdmin ? 'Админ' : 'Клиент'}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <LogIn className="w-4 h-4 text-[#0D9488]" />
+                  <span>Войти</span>
+                </>
+              )}
+            </button>
+
+            {isUserAdmin && (
+              <button
+                type="button"
+                onClick={() => setAdminDashboardOpen(true)}
+                className="py-2.5 px-3.5 rounded-xl bg-[#0D9488] hover:bg-[#0F766E] text-white text-xs font-bold inline-flex items-center gap-1.5 transition-snappy whitespace-nowrap cursor-pointer shadow-xs"
+              >
+                <ShieldCheck className="w-4 h-4" />
+                <span>Управление</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setSavedAppointmentsModalOpen(true)}
+              className="py-2.5 px-3.5 rounded-xl bg-white border border-[#D1EAE4] hover:border-[#0D9488] text-xs font-bold text-[#0F2922] inline-flex items-center gap-2 transition-snappy whitespace-nowrap cursor-pointer"
+            >
+              <Calendar className="w-4 h-4 text-[#0D9488]" />
+              <span>Кабинет</span>
+              <span className="px-1.5 py-0.5 rounded-md bg-[#E6F4F1] text-[#0D9488] font-extrabold tabular-nums">
+                {activeAppointmentsCount}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => openBookingWithContext()}
+              className="py-2.5 px-5 rounded-xl bg-[#F97316] hover:bg-[#EA580C] text-white font-bold text-sm shadow-sm hover:shadow transition-snappy inline-flex items-center gap-2 whitespace-nowrap cursor-pointer"
+            >
+              <span>Записаться на прием</span>
+            </button>
+          </div>
+
+          {/* Mobile Menu Trigger */}
+          <div className="flex items-center gap-2 lg:hidden">
+            <button
+              type="button"
+              onClick={() => setAuthModalOpen(true)}
+              className="p-2.5 rounded-xl bg-white border border-[#D1EAE4] text-[#0F2922] inline-flex items-center gap-1 text-xs font-bold"
+              aria-label="Аккаунт"
+            >
+              <UserCheck className="w-4 h-4 text-[#0D9488]" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setSavedAppointmentsModalOpen(true)}
+              className="p-2.5 rounded-xl bg-white border border-[#D1EAE4] text-[#0F2922] inline-flex items-center gap-1.5 text-xs font-bold"
+              aria-label="Мои записи"
+            >
+              <Calendar className="w-4 h-4 text-[#0D9488]" />
+              <span className="tabular-nums">{activeAppointmentsCount}</span>
             </button>
             <button
               type="button"
               onClick={() => setMobileMenuOpen((prev) => !prev)}
-              aria-label="Открыть меню навигации"
-              className="md:hidden w-10 h-10 rounded-xl border border-[#D1EAE4] flex items-center justify-center text-[#0F2922] hover:bg-[#F4FAF8] transition-snappy shrink-0"
+              className="p-2.5 rounded-xl bg-white border border-[#D1EAE4] text-[#0F2922]"
+              aria-label="Открыть меню"
             >
-              {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+              {mobileMenuOpen ? (
+                <X className="w-6 h-6" />
+              ) : (
+                <Menu className="w-6 h-6" />
+              )}
             </button>
           </div>
         </div>
 
-        {/* Mobile Dropdown Menu */}
+        {/* Mobile Drawer */}
         {mobileMenuOpen && (
-          <div className="md:hidden border-t border-[#D1EAE4] bg-white px-6 py-4 space-y-3 shadow-lg">
-            <div className="flex flex-col space-y-2.5 text-sm font-medium text-[#0F2922]">
+          <div className="lg:hidden bg-white border-b border-[#D1EAE4] px-6 py-5 space-y-4">
+            <div className="flex flex-col space-y-3 text-sm font-semibold text-[#0F2922]">
               <a
                 href="#services"
                 onClick={() => setMobileMenuOpen(false)}
                 className="py-1.5 hover:text-[#0D9488]"
               >
-                Услуги и цены
+                Услуги и прайс-лист
               </a>
               <a
                 href="#calculator"
                 onClick={() => setMobileMenuOpen(false)}
                 className="py-1.5 hover:text-[#0D9488]"
               >
-                Калькулятор стоимости
+                Калькулятор чек-апа
               </a>
               <a
                 href="#doctors"
@@ -393,512 +1092,575 @@ export default function App() {
                 onClick={() => setMobileMenuOpen(false)}
                 className="py-1.5 hover:text-[#0D9488]"
               >
-                Отзывы владельцев
-              </a>
-              <a
-                href="#faq"
-                onClick={() => setMobileMenuOpen(false)}
-                className="py-1.5 hover:text-[#0D9488]"
-              >
-                Частые вопросы
+                Истории выздоровления ({reviews.length})
               </a>
               <a
                 href="#contacts"
                 onClick={() => setMobileMenuOpen(false)}
                 className="py-1.5 hover:text-[#0D9488]"
               >
-                Контакты и схема проезда
+                Маршрут и контакты
               </a>
             </div>
-            <div className="pt-3 border-t border-[#D1EAE4] flex flex-wrap items-center justify-between gap-2 text-xs text-[#335249]">
-              <a
-                href={`tel:${CLINIC_INFO.phoneRaw}`}
-                className="font-bold text-[#0F2922] tabular-nums"
-              >
-                {CLINIC_INFO.phoneDisplay} (24/7)
-              </a>
+
+            <div className="pt-3 border-t border-[#D1EAE4] flex flex-col sm:flex-row gap-3">
+              {isUserAdmin && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    setAdminDashboardOpen(true);
+                  }}
+                  className="w-full py-3 px-4 rounded-xl bg-[#0F2922] text-white font-bold text-sm inline-flex items-center justify-center gap-2"
+                >
+                  <ShieldCheck className="w-4 h-4 text-[#5EEAD4]" />
+                  <span>Открыть Админ-панель</span>
+                </button>
+              )}
               <button
                 type="button"
-                onClick={openSavedAppointments}
-                className="font-semibold text-[#0D9488] underline underline-offset-4"
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  openBookingWithContext();
+                }}
+                className="w-full py-3 px-5 rounded-xl bg-[#F97316] text-white font-bold text-sm text-center"
               >
-                Мои заявки ({userVisibleAppointments.length})
+                Записаться на прием
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  setEmergencyModalOpen(true);
+                }}
+                className="w-full py-3 px-5 rounded-xl bg-red-50 text-red-700 border border-red-200 font-bold text-sm text-center"
+              >
+                Экстренная помощь 24/7
               </button>
             </div>
           </div>
         )}
       </header>
 
-      <main id="top" className="flex-1">
-        {/* Hero Section */}
-        <section className="relative bg-gradient-to-b from-[#F4FAF8] to-white pt-6 pb-16 lg:pb-24 border-b border-[#D1EAE4]">
+      {/* Role Status Bar if logged in */}
+      {currentUser.authSource !== 'guest' && (
+        <div className="bg-[#E6F4F1] border-b border-[#D1EAE4] px-6 py-2">
+          <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div className="flex items-center gap-2 text-[#0F2922]">
+              <UserCheck className="w-4 h-4 text-[#0D9488]" />
+              <span>
+                Вы вошли как: <strong>{currentUser.displayName}</strong> · Роль:{' '}
+                <span className="font-bold text-[#0D9488]">
+                  {isUserAdmin
+                    ? 'Главный администратор (Логин: 1)'
+                    : 'Клиент клиники (Google)'}
+                </span>
+              </span>
+            </div>
+            <div className="flex items-center gap-4">
+              {isUserAdmin && (
+                <button
+                  type="button"
+                  onClick={() => setAdminDashboardOpen(true)}
+                  className="font-bold text-[#0D9488] hover:underline cursor-pointer"
+                >
+                  Открыть панель управления клиникой →
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setAuthModalOpen(true)}
+                className="font-semibold text-[#335249] hover:text-[#0F2922] cursor-pointer"
+              >
+                Профиль аккаунта
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <main className="flex-1">
+        {/* HERO SECTION */}
+        <section className="relative overflow-hidden pt-8 pb-16 lg:pt-14 lg:pb-24 border-b border-[#D1EAE4]">
           <div className="max-w-7xl mx-auto px-6 lg:px-8">
-            {/* Clinic 24/7 Bar & User Profile / RBAC Demo Switcher & Saved Bookings */}
-            <div className="flex flex-wrap items-center justify-between gap-4 pb-6 mb-8 border-b border-[#D1EAE4] text-xs sm:text-sm text-[#335249]">
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                <span className="font-semibold text-[#0D9488]">Работаем 24/7 без выходных</span>
-                <span aria-hidden="true">·</span>
-                <span>Москва, ул. Профсоюзная, д. 45 (м. Новые Черёмушки)</span>
-                <span aria-hidden="true">·</span>
-                <a
-                  href={`tel:${CLINIC_INFO.phoneRaw}`}
-                  className="font-bold text-[#0F2922] hover:text-[#0D9488] transition-snappy tabular-nums whitespace-nowrap"
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-12 items-center">
+              <div className="lg:col-span-7 space-y-6">
+                <div className="inline-flex items-center gap-2.5 px-3.5 py-1.5 rounded-lg bg-[#E6F4F1] border border-[#0D9488]/25 text-[#0F766E] text-xs font-bold tracking-wide">
+                  <ShieldCheck className="w-4 h-4 text-[#0D9488]" />
+                  <span>ДОКАЗАТЕЛЬНАЯ ВЕТЕРИНАРИЯ БЕЗ СТРЕССА · МОСКВА</span>
+                </div>
+
+                <h1
+                  className="font-extrabold text-[#0F2922] tracking-tight leading-[1.08]"
+                  style={{ fontSize: 'clamp(2.15rem, 3.8vw + 0.5rem, 3.6rem)' }}
                 >
-                  {CLINIC_INFO.phoneDisplay}
-                </a>
+                  Бережная медицина для тех, кто доверяет вам свою жизнь
+                </h1>
+
+                <p className="text-base sm:text-lg text-[#335249] leading-relaxed max-w-[62ch]">
+                  Круглосуточный ветеринарный госпиталь ({CLINIC_INFO.address}). Собственная экспресс-лаборатория за 15 минут, безопасный газовый наркоз Севофлуран и раздельные зоны ожидания для кошек, собак и грызунов.
+                </p>
+
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3.5 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => openBookingWithContext()}
+                    className="py-4 px-7 rounded-xl bg-[#F97316] hover:bg-[#EA580C] text-white font-bold text-base shadow-md hover:shadow-lg transition-snappy inline-flex items-center justify-center gap-2.5 whitespace-nowrap cursor-pointer"
+                  >
+                    <span>Записаться на прием онлайн</span>
+                    <ArrowRight className="w-5 h-5" />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setEmergencyModalOpen(true)}
+                    className="py-4 px-6 rounded-xl bg-white hover:bg-[#E6F4F1] text-[#0F2922] border-2 border-[#0D9488] font-bold text-base transition-snappy inline-flex items-center justify-center gap-2 whitespace-nowrap cursor-pointer"
+                  >
+                    <PhoneCall className="w-4 h-4 text-[#0D9488]" />
+                    <span>Экстренный вызов 24/7</span>
+                  </button>
+                </div>
+
+                {/* Inline Express Callback Bar */}
+                <div className="rounded-2xl bg-white border border-[#D1EAE4] p-4 sm:p-5 shadow-xs">
+                  <div className="flex items-center justify-between gap-2 mb-3">
+                    <span className="text-xs font-bold uppercase tracking-wider text-[#0D9488]">
+                      Экспресс-запись дежурному врачу (перезвоним за 10 минут)
+                    </span>
+                    <span className="text-xs font-semibold text-[#335249] hidden sm:inline">
+                      Без очередей
+                    </span>
+                  </div>
+
+                  {quickSentBanner ? (
+                    <div className="rounded-xl bg-[#E6F4F1] border border-[#0D9488] p-3.5 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5 text-xs sm:text-sm font-semibold text-[#0F2922]">
+                        <CheckCircle2 className="w-5 h-5 text-[#0D9488] shrink-0" />
+                        <span>{quickSentBanner}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setQuickSentBanner(null)}
+                        className="text-xs font-bold text-[#0D9488] hover:underline shrink-0"
+                      >
+                        Новая заявка
+                      </button>
+                    </div>
+                  ) : (
+                    <form
+                      onSubmit={handleQuickCallbackSubmit}
+                      className="grid grid-cols-1 sm:grid-cols-12 gap-2.5"
+                    >
+                      <div className="sm:col-span-4">
+                        <label htmlFor="quick-pet" className="sr-only">
+                          Кто ваш питомец
+                        </label>
+                        <select
+                          id="quick-pet"
+                          value={quickPetType}
+                          onChange={(e) => setQuickPetType(e.target.value)}
+                          className="w-full h-11 px-3.5 rounded-xl border border-[#D1EAE4] bg-[#F4FAF8] text-sm font-semibold text-[#0F2922] focus:outline-none focus:border-[#0D9488]"
+                        >
+                          <option value="Собака">Питомец: Собака</option>
+                          <option value="Кошка">Питомец: Кошка</option>
+                          <option value="Грызун">Питомец: Грызун</option>
+                        </select>
+                      </div>
+
+                      <div className="sm:col-span-5">
+                        <label htmlFor="quick-phone" className="sr-only">
+                          Ваш телефон
+                        </label>
+                        <input
+                          id="quick-phone"
+                          type="tel"
+                          required
+                          value={quickPhone}
+                          onChange={(e) => setQuickPhone(e.target.value)}
+                          placeholder="+7 (999) 000-00-00"
+                          className="w-full h-11 px-3.5 rounded-xl border border-[#D1EAE4] bg-[#F4FAF8] text-sm text-[#0F2922] placeholder:text-[#335249]/50 focus:outline-none focus:border-[#0D9488] tabular-nums"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-3">
+                        <button
+                          type="submit"
+                          className="w-full h-11 px-4 rounded-xl bg-[#0D9488] hover:bg-[#0F766E] text-white font-bold text-xs sm:text-sm transition-snappy whitespace-nowrap cursor-pointer"
+                        >
+                          Жду звонка
+                        </button>
+                      </div>
+                    </form>
+                  )}
+                </div>
+
+                {/* Key Metrics Strip */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-2">
+                  {HERO_STATS.map((stat) => (
+                    <div
+                      key={stat.label}
+                      className="rounded-xl bg-white/80 border border-[#D1EAE4] p-3.5"
+                    >
+                      <div className="text-xl sm:text-2xl font-extrabold text-[#0D9488] tabular-nums">
+                        {stat.value}
+                      </div>
+                      <div className="text-xs font-bold text-[#0F2922] mt-0.5">
+                        {stat.label}
+                      </div>
+                      <div className="text-[11px] text-[#335249] mt-0.5 leading-tight">
+                        {stat.detail}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2.5">
-                {/* User Profile / Login & Registration Triggers */}
-                <button
-                  type="button"
-                  onClick={() => openAuthModal('login')}
-                  className="inline-flex items-center gap-2 py-1 pl-1.5 pr-3 rounded-xl bg-white hover:bg-[#E6F4F1] border border-[#D1EAE4] text-[#0F2922] font-semibold text-xs transition-snappy whitespace-nowrap shrink-0 cursor-pointer"
-                >
+              {/* Right Column */}
+              <div className="lg:col-span-5">
+                <div className="relative rounded-2xl overflow-hidden border-2 border-[#D1EAE4] bg-[#E6F4F1] shadow-xl">
                   <img
-                    src={currentUser.photoURL}
-                    alt={currentUser.displayName}
-                    referrerPolicy="no-referrer"
-                    className="w-6 h-6 rounded-full object-cover"
-                  />
-                  <span>
-                    {currentUser.authSource === 'guest'
-                      ? 'Войти в аккаунт'
-                      : currentUser.displayName}
-                  </span>
-                </button>
-
-                {currentUser.authSource === 'guest' ? (
-                  <button
-                    type="button"
-                    onClick={() => openAuthModal('register')}
-                    className="inline-flex items-center gap-1.5 py-1.5 px-3 rounded-xl bg-white hover:bg-[#E6F4F1] border border-[#D1EAE4] text-[#0D9488] font-bold text-xs transition-snappy whitespace-nowrap shrink-0 cursor-pointer"
-                  >
-                    <span>Регистрация</span>
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={handleLogoutClick}
-                    className="inline-flex items-center gap-1.5 py-1.5 px-3 rounded-xl bg-white hover:bg-[#E6F4F1] border border-[#D1EAE4] text-[#335249] hover:text-[#0F2922] font-semibold text-xs transition-snappy whitespace-nowrap shrink-0 cursor-pointer"
-                  >
-                    <span>Выйти</span>
-                  </button>
-                )}
-
-                {currentUser.role === 'admin' && currentUser.login === '1' && (
-                  <a
-                    href="#admin-panel"
-                    className="inline-flex items-center gap-1.5 py-1.5 px-3 rounded-xl bg-[#F97316] hover:bg-[#EA580C] text-white font-bold text-xs transition-snappy whitespace-nowrap shrink-0"
-                  >
-                    <span>Админ-панель</span>
-                  </a>
-                )}
-
-                <button
-                  type="button"
-                  onClick={openSavedAppointments}
-                  className="inline-flex items-center gap-1.5 py-1.5 px-3 rounded-xl bg-[#E6F4F1] hover:bg-[#D1EAE4] text-[#0F2922] font-semibold text-xs transition-snappy whitespace-nowrap shrink-0 cursor-pointer tabular-nums"
-                >
-                  <CalendarCheck className="w-3.5 h-3.5 text-[#0D9488]" />
-                  <span>Мои заявки ({userVisibleAppointments.length})</span>
-                </button>
-              </div>
-            </div>
-
-            {/* 2-Column Hero Split with items-stretch balance */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-12 items-stretch">
-              {/* Left Column: Value Proposition & Actions */}
-              <div className="lg:col-span-7 flex flex-col justify-between py-2">
-                <div>
-                  <div className="flex items-center gap-2 text-xs sm:text-sm font-semibold text-[#0D9488] mb-4">
-                    <span>Ветеринарный госпиталь доказательной медицины</span>
-                    <span aria-hidden="true">·</span>
-                    <span>Кошки, собаки и мелкие грызуны</span>
-                  </div>
-
-                  <h1
-                    className="font-extrabold text-[#0F2922] tracking-tight leading-[1.12] mb-6"
-                    style={{ fontSize: 'clamp(2.25rem, 4vw, 3.5rem)' }}
-                  >
-                    Бережная забота и точная диагностика для ваших питомцев 24/7
-                  </h1>
-
-                  <p className="text-base sm:text-lg text-[#335249] leading-relaxed max-w-2xl mb-8">
-                    Принимаем планово и экстренно без очередей. Проводим УЗИ экспертного класса и анализы крови за 15 минут в собственной лаборатории, лечим по международным протоколам Fear Free без боли и лишних назначений.
-                  </p>
-
-                  {/* Primary & Emergency Action Buttons */}
-                  <div className="flex flex-wrap items-center gap-4 mb-10">
-                    <button
-                      type="button"
-                      onClick={() => openGeneralBooking()}
-                      className="py-4 px-7 rounded-2xl bg-[#F97316] hover:bg-[#EA580C] text-white font-bold text-sm sm:text-base shadow-md transition-snappy inline-flex items-center gap-2.5 whitespace-nowrap shrink-0 cursor-pointer"
-                    >
-                      <span>Записаться онлайн</span>
-                      <ArrowRight className="w-4 h-4" />
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setEmergencyModalOpen(true)}
-                      className="py-4 px-6 rounded-2xl bg-white hover:bg-[#F4FAF8] text-[#0F2922] border border-[#D1EAE4] font-semibold text-sm sm:text-base transition-snappy inline-flex items-center gap-2.5 whitespace-nowrap shrink-0 cursor-pointer"
-                    >
-                      <Ambulance className="w-5 h-5 text-[#F97316]" />
-                      <span>Экстренный вызов (чек-лист)</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Quantitative Trust Proof Footer inside Left Column */}
-                <div className="pt-6 border-t border-[#D1EAE4] grid grid-cols-3 gap-6">
-                  <div>
-                    <div className="text-2xl sm:text-3xl font-extrabold text-[#0F2922] tabular-nums">
-                      15 мин
-                    </div>
-                    <div className="text-xs text-[#335249] mt-1">
-                      готовность анализов крови и ПЦР в своей лаборатории
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-2xl sm:text-3xl font-extrabold text-[#0F2922] tabular-nums">
-                      18 400+
-                    </div>
-                    <div className="text-xs text-[#335249] mt-1">
-                      здоровых питомцев за 12 лет работы клиники в Москве
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-2xl sm:text-3xl font-extrabold text-[#0D9488] tabular-nums">
-                      99.4%
-                    </div>
-                    <div className="text-xs text-[#335249] mt-1">
-                      успешных плановых операций с газовым наркозом
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Right Column: High-Impact Pet Photo filling height */}
-              <div className="lg:col-span-5 flex">
-                <div className="relative w-full rounded-2xl overflow-hidden border border-[#D1EAE4] bg-[#E6F4F1] shadow-lg flex flex-col justify-end min-h-[360px] lg:min-h-full">
-                  <SmartImage
                     src={CLINIC_INFO.heroPhotoUrl}
-                    alt="Счастливый золотистый ретривер на осмотре у ветеринарного врача в клинике Лапа Помощи"
-                    variant="hero"
-                    label="Ветеринарный центр «Лапа Помощи»"
-                    sublabel="Осмотр по стандарту Fear Free без стресса"
-                    className="w-full h-full object-cover lg:absolute lg:inset-0"
+                    alt="Главный ветеринарный врач клиники Лапа Помощи осматривает питомца в светлом кабинете"
+                    className="w-full h-[420px] sm:h-[500px] object-cover object-center"
                   />
-                  <div className="relative z-10 bg-gradient-to-t from-[#0F2922]/90 via-[#0F2922]/55 to-transparent p-6 pt-16 text-white">
-                    <div className="text-xs font-medium text-[#B8E1D8] mb-1">
-                      Прием без клеток и пугающих запахов
-                    </div>
-                    <p className="text-sm sm:text-base font-semibold leading-snug">
-                      Раздельные зоны ожидания для собак, кошек и мелких грызунов с феромонами спокойствия Feliway и Adaptil
-                    </p>
+                  <div className="absolute inset-0 bg-gradient-to-t from-[#0F2922]/85 via-[#0F2922]/20 to-transparent" />
+
+                  <div className="absolute top-4 left-4 right-4 flex items-center justify-between gap-2">
+                    <span className="px-3 py-1.5 rounded-lg bg-[#0F2922]/80 backdrop-blur-md text-white text-xs font-semibold inline-flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-[#5EEAD4]" />
+                      Стандарт Fear Free (прием без страха)
+                    </span>
+                    <span className="px-3 py-1.5 rounded-lg bg-white/95 text-[#0F2922] text-xs font-extrabold tabular-nums shadow-xs">
+                      ★ 4.9 · 1 420+ отзывов
+                    </span>
                   </div>
-                </div>
-              </div>
-            </div>
 
-            {/* Full-Width 4-Column Advantage Strip below Hero Split */}
-            <div className="mt-12 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-              <div className="rounded-2xl bg-white border border-[#D1EAE4] p-5 flex items-start gap-4">
-                <div className="w-11 h-11 rounded-xl bg-[#E6F4F1] text-[#0D9488] flex items-center justify-center shrink-0">
-                  <Ambulance className="w-5 h-5" />
-                </div>
-                <div>
-                  <h2 className="text-sm font-bold text-[#0F2922] mb-1">
-                    Выезд на дом за 30 минут
-                  </h2>
-                  <p className="text-xs text-[#335249] leading-relaxed">
-                    Круглосуточные бригады с портативным УЗИ, ЭКГ и кислородным боксом по всей Москве.
-                  </p>
-                </div>
-              </div>
-
-              <div className="rounded-2xl bg-white border border-[#D1EAE4] p-5 flex items-start gap-4">
-                <div className="w-11 h-11 rounded-xl bg-[#E6F4F1] text-[#0D9488] flex items-center justify-center shrink-0">
-                  <Microscope className="w-5 h-5" />
-                </div>
-                <div>
-                  <h2 className="text-sm font-bold text-[#0F2922] mb-1">
-                    Собственная лаборатория
-                  </h2>
-                  <p className="text-xs text-[#335249] leading-relaxed">
-                    Анализаторы IDEXX (США): клинический и биохимический анализ крови за 15 минут.
-                  </p>
-                </div>
-              </div>
-
-              <div className="rounded-2xl bg-white border border-[#D1EAE4] p-5 flex items-start gap-4">
-                <div className="w-11 h-11 rounded-xl bg-[#E6F4F1] text-[#0D9488] flex items-center justify-center shrink-0">
-                  <Activity className="w-5 h-5" />
-                </div>
-                <div>
-                  <h2 className="text-sm font-bold text-[#0F2922] mb-1">
-                    Стационар интенсивной терапии
-                  </h2>
-                  <p className="text-xs text-[#335249] leading-relaxed">
-                    Индивидуальные кислородные боксы с подогревом пола и постом реаниматолога 24/7.
-                  </p>
-                </div>
-              </div>
-
-              <div className="rounded-2xl bg-white border border-[#D1EAE4] p-5 flex items-start gap-4">
-                <div className="w-11 h-11 rounded-xl bg-[#E6F4F1] text-[#0D9488] flex items-center justify-center shrink-0">
-                  <ShieldCheck className="w-5 h-5" />
-                </div>
-                <div>
-                  <h2 className="text-sm font-bold text-[#0F2922] mb-1">
-                    Фиксированная смета до лечения
-                  </h2>
-                  <p className="text-xs text-[#335249] leading-relaxed">
-                    Никаких скрытых доплат: согласуем план диагностики и точную стоимость заранее.
-                  </p>
+                  <div className="absolute bottom-4 left-4 right-4 rounded-xl bg-white/95 backdrop-blur-md p-4 border border-[#D1EAE4] shadow-lg">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-xs font-bold uppercase tracking-wider text-[#0D9488]">
+                          Дежурная бригада сегодня
+                        </div>
+                        <div className="text-sm font-extrabold text-[#0F2922] mt-0.5">
+                          Алексей Смирнов · Елена Волкова · Дмитрий Морозов
+                        </div>
+                        <div className="text-xs text-[#335249] mt-1">
+                          Готовы к плановому осмотру, УЗИ, ЭхоКГ и экстренной хирургии
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          openBookingWithContext({
+                            serviceTitle: servicesList[0]?.title,
+                            estimatedPrice: servicesList[0]?.priceFrom,
+                          })
+                        }
+                        className="shrink-0 py-2 px-3 rounded-lg bg-[#E6F4F1] hover:bg-[#0D9488] text-[#0F766E] hover:text-white text-xs font-bold transition-snappy cursor-pointer"
+                      >
+                        К врачу →
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         </section>
 
-        {/* Admin Dashboard Section (Rendered strictly when authenticated with login: 1, password: 1) */}
-        {currentUser.role === 'admin' && currentUser.login === '1' && (
-          <AdminDashboard
-            appointments={appointments}
-            onUpdateAppointments={setAppointments}
-            services={services}
-            onUpdateServices={setServices}
-            doctors={doctors}
-            onUpdateDoctors={setDoctors}
-            onShowToast={showToastNotice}
-          />
-        )}
-
-        {/* Services & Prices Section with Interactive Filter */}
-        <section id="services" className="py-16 lg:py-24 bg-white">
+        {/* TRUST & CLINICAL STANDARDS STRIP */}
+        <section className="py-12 bg-white border-b border-[#D1EAE4]">
           <div className="max-w-7xl mx-auto px-6 lg:px-8">
-            <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 mb-10">
-              <div>
-                <div className="text-xs font-semibold text-[#0D9488] mb-2">
-                  Прозрачный прейскурант клиники · Все расходные материалы включены
-                </div>
-                <h2 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold text-[#0F2922] tracking-tight">
-                  Услуги и цены
-                </h2>
-              </div>
-
-              {/* Interactive Filter Tabs (Segmented Control) */}
-              <div
-                role="tablist"
-                aria-label="Фильтр категорий услуг"
-                className="inline-flex flex-wrap items-center gap-1.5 p-1.5 bg-[#F4FAF8] border border-[#D1EAE4] rounded-xl self-start"
-              >
-                {(
-                  [
-                    { id: 'all', label: 'Все направления' },
-                    { id: 'diagnostics', label: 'Диагностика' },
-                    { id: 'treatment', label: 'Лечение и хирургия' },
-                    { id: 'care', label: 'Уход и профилактика' },
-                  ] as const
-                ).map((tab) => {
-                  const isActive = activeCategory === tab.id;
-                  return (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      role="tab"
-                      aria-selected={isActive}
-                      onClick={() => setActiveCategory(tab.id)}
-                      className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-snappy whitespace-nowrap shrink-0 cursor-pointer ${
-                        isActive
-                          ? 'bg-[#0D9488] text-white shadow-xs'
-                          : 'text-[#335249] hover:text-[#0F2922]'
-                      }`}
-                    >
-                      {tab.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Services Cards Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              {filteredServices.map((service) => (
-                <article
-                  key={service.id}
-                  className="rounded-2xl bg-white border border-[#D1EAE4] hover:border-[#0D9488] p-6 flex flex-col justify-between transition-snappy hover:shadow-md"
+              {TRUST_BADGES.map((badge) => (
+                <div
+                  key={badge.title}
+                  className="rounded-2xl bg-[#F4FAF8] border border-[#D1EAE4] p-5 flex flex-col justify-between"
                 >
                   <div>
-                    {/* Unboxed clean metadata header */}
-                    <div className="flex items-center justify-between gap-2 text-xs text-[#335249] mb-3 tabular-nums">
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-bold text-[#0D9488]">{service.number}.</span>
-                        <span>{service.categoryLabel}</span>
-                        <span aria-hidden="true">·</span>
-                        <span>{service.duration}</span>
-                      </div>
+                    <div className="w-9 h-9 rounded-xl bg-[#E6F4F1] text-[#0D9488] flex items-center justify-center mb-3.5">
+                      <CheckCircle2 className="w-5 h-5" />
                     </div>
-
-                    <h3 className="text-lg font-bold text-[#0F2922] leading-snug mb-3">
-                      {service.title}
-                    </h3>
-
-                    <p className="text-xs text-[#335249] leading-relaxed mb-5">
-                      {service.description}
+                    <h2 className="text-base font-bold text-[#0F2922] mb-1.5">
+                      {badge.title}
+                    </h2>
+                    <p className="text-xs sm:text-sm text-[#335249] leading-relaxed">
+                      {badge.description}
                     </p>
-
-                    <ul className="space-y-2 mb-6 border-t border-[#D1EAE4] pt-4">
-                      {service.included.map((item) => (
-                        <li
-                          key={item}
-                          className="flex items-start gap-2 text-xs text-[#0F2922]"
-                        >
-                          <Check className="w-3.5 h-3.5 text-[#0D9488] shrink-0 mt-0.5" />
-                          <span>{item}</span>
-                        </li>
-                      ))}
-                    </ul>
                   </div>
-
-                  <div className="pt-4 border-t border-[#D1EAE4] flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-[11px] text-[#335249]">Стоимость</div>
-                      <div className="text-lg font-extrabold text-[#0F2922] tabular-nums">
-                        от {service.priceFrom.toLocaleString('ru-RU')} ₽
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        openGeneralBooking({
-                          serviceTitle: service.title,
-                          estimatedPrice: service.priceFrom,
-                        })
-                      }
-                      className="px-4 py-2.5 rounded-xl bg-[#E6F4F1] hover:bg-[#0D9488] text-[#0F2922] hover:text-white text-xs font-bold transition-snappy whitespace-nowrap shrink-0 cursor-pointer"
-                    >
-                      Записаться
-                    </button>
-                  </div>
-                </article>
+                </div>
               ))}
             </div>
           </div>
         </section>
 
-        {/* Interactive Cost & Check-up Calculator Section */}
+        {/* SERVICES & TRANSPARENT PRICE CATALOG */}
+        <section
+          id="services"
+          className="py-16 lg:py-24 border-b border-[#D1EAE4]"
+        >
+          <div className="max-w-7xl mx-auto px-6 lg:px-8">
+            <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 mb-10">
+              <div>
+                <div className="text-xs font-bold uppercase tracking-wider text-[#0D9488] mb-2">
+                  Прозрачный прайс-лист без скрытых доплат
+                </div>
+                <h2
+                  className="font-extrabold text-[#0F2922] tracking-tight"
+                  style={{ fontSize: 'clamp(1.75rem, 2.6vw + 0.4rem, 2.5rem)' }}
+                >
+                  Услуги и диагностические программы
+                </h2>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                {isUserAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => setAdminDashboardOpen(true)}
+                    className="py-2.5 px-4 rounded-xl bg-[#0F2922] text-white text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <ShieldCheck className="w-4 h-4 text-[#5EEAD4]" />
+                    <span>Редактировать прайс (Админ)</span>
+                  </button>
+                )}
+                <div className="relative w-full sm:w-72">
+                  <Search className="w-4 h-4 text-[#335249] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={serviceSearch}
+                    onChange={(e) => setServiceSearch(e.target.value)}
+                    placeholder="Найти УЗИ, вакцинацию, ЭхоКГ..."
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-white border border-[#D1EAE4] text-sm text-[#0F2922] placeholder:text-[#335249]/60 focus:outline-none focus:border-[#0D9488]"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 mb-8">
+              {(
+                [
+                  { id: 'all', label: `Все направления (${servicesList.length})` },
+                  { id: 'diagnostics', label: 'Диагностика и анализы' },
+                  { id: 'treatment', label: 'Хирургия и терапия' },
+                  { id: 'care', label: 'Вакцинация и уход' },
+                ] as { id: ServiceCategory; label: string }[]
+              ).map((tab) => {
+                const active = activeCategory === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setActiveCategory(tab.id)}
+                    className={`py-2.5 px-4 rounded-xl text-xs sm:text-sm font-bold transition-snappy cursor-pointer ${
+                      active
+                        ? 'bg-[#0D9488] text-white shadow-xs'
+                        : 'bg-white text-[#335249] border border-[#D1EAE4] hover:border-[#0D9488] hover:text-[#0F2922]'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {filteredServices.length === 0 ? (
+              <div className="rounded-2xl bg-white border border-[#D1EAE4] p-10 text-center">
+                <p className="text-base font-bold text-[#0F2922] mb-2">
+                  По вашему запросу «{serviceSearch}» услуг не найдено
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveCategory('all');
+                    setServiceSearch('');
+                  }}
+                  className="py-2.5 px-5 rounded-xl bg-[#0D9488] text-white text-xs font-bold cursor-pointer"
+                >
+                  Показать все услуги
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {filteredServices.map((service) => (
+                  <div
+                    key={service.id}
+                    className={`rounded-2xl bg-white border p-6 flex flex-col justify-between transition-snappy hover:-translate-y-0.5 hover:shadow-md ${
+                      service.featured
+                        ? 'border-[#0D9488] ring-1 ring-[#0D9488]/20'
+                        : 'border-[#D1EAE4]'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-2 mb-4">
+                        <span className="text-xs font-extrabold uppercase tracking-wider text-[#0D9488]">
+                          {service.number} / {service.categoryLabel}
+                        </span>
+                        <span className="inline-flex items-center gap-1 text-xs font-semibold text-[#335249] bg-[#F4FAF8] px-2.5 py-1 rounded-md border border-[#D1EAE4]">
+                          <Clock className="w-3.5 h-3.5 text-[#0D9488]" />
+                          {service.duration}
+                        </span>
+                      </div>
+
+                      <h3 className="text-lg font-extrabold text-[#0F2922] mb-2 leading-snug">
+                        {service.title}
+                      </h3>
+
+                      <p className="text-sm text-[#335249] leading-relaxed mb-4">
+                        {service.description}
+                      </p>
+
+                      <div className="space-y-1.5 pt-3 border-t border-[#D1EAE4] mb-6">
+                        <div className="text-xs font-bold text-[#0F2922] mb-2">
+                          Включено в стоимость:
+                        </div>
+                        {service.included.map((inc) => (
+                          <div
+                            key={inc}
+                            className="flex items-start gap-2 text-xs text-[#335249]"
+                          >
+                            <Check className="w-3.5 h-3.5 text-[#0D9488] shrink-0 mt-0.5" />
+                            <span>{inc}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="pt-4 border-t border-[#D1EAE4] flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-[11px] font-semibold text-[#335249]">
+                          Фиксированный тариф
+                        </div>
+                        <div className="text-xl font-extrabold text-[#0F2922] tabular-nums">
+                          от {service.priceFrom.toLocaleString('ru-RU')} ₽
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          openBookingWithContext({
+                            serviceTitle: service.title,
+                            estimatedPrice: service.priceFrom,
+                          })
+                        }
+                        className="py-2.5 px-4 rounded-xl bg-[#E6F4F1] hover:bg-[#0D9488] text-[#0F2922] hover:text-white font-bold text-xs sm:text-sm transition-snappy whitespace-nowrap cursor-pointer"
+                      >
+                        Выбрать услугу
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+
+        {/* INTERACTIVE CHECKUP & VACCINATION COST CALCULATOR */}
         <section
           id="calculator"
-          className="py-16 lg:py-24 bg-[#F4FAF8] border-y border-[#D1EAE4]"
+          className="py-16 lg:py-24 bg-white border-b border-[#D1EAE4]"
         >
           <div className="max-w-7xl mx-auto px-6 lg:px-8">
             <div className="max-w-3xl mb-10">
-              <div className="text-xs font-semibold text-[#0D9488] mb-2">
-                Точный онлайн-расчет за 30 секунд · Мгновенная передача в запись
+              <div className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#0D9488] mb-2">
+                <Calculator className="w-4 h-4" />
+                <span>Интерактивный конструктор визита</span>
               </div>
-              <h2 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold text-[#0F2922] tracking-tight mb-3">
-                Интерактивный калькулятор чек-апа и услуг
+              <h2
+                className="font-extrabold text-[#0F2922] tracking-tight"
+                style={{ fontSize: 'clamp(1.75rem, 2.6vw + 0.4rem, 2.5rem)' }}
+              >
+                Рассчитайте стоимость комплексного чек-апа за 30 секунд
               </h2>
-              <p className="text-sm sm:text-base text-[#335249]">
-                Выберите вид питомца, возраст и нужную программу обследования. Скрипт сразу рассчитает стоимость с учетом расходных материалов и позволит записаться в один клик.
+              <p className="text-sm sm:text-base text-[#335249] mt-2">
+                Выберите вид и возраст питомца, отметьте программу и зафиксируйте смету при онлайн-записи.
               </p>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-              {/* Left Column: Controls */}
-              <div className="lg:col-span-7 rounded-2xl bg-white border border-[#D1EAE4] p-6 sm:p-8 space-y-7">
-                {/* Step 1: Pet Type */}
-                <div>
-                  <label className="block text-sm font-bold text-[#0F2922] mb-3">
-                    1. Выберите вид вашего питомца
-                  </label>
+              <div className="lg:col-span-7 space-y-6">
+                {/* Step 1: Species */}
+                <div className="rounded-2xl bg-[#F4FAF8] border border-[#D1EAE4] p-6">
+                  <div className="text-xs font-bold uppercase tracking-wider text-[#0D9488] mb-3">
+                    Шаг 1 · Кто ваш питомец?
+                  </div>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    {(Object.keys(PET_TYPES_CONFIG) as PetType[]).map((petKey) => {
-                      const pet = PET_TYPES_CONFIG[petKey];
-                      const active = calcPetType === petKey;
+                    {(Object.keys(PET_TYPES_CONFIG) as PetType[]).map((key) => {
+                      const sp = PET_TYPES_CONFIG[key];
+                      const active = calcPetType === key;
                       return (
                         <button
-                          key={petKey}
+                          key={key}
                           type="button"
-                          onClick={() => setCalcPetType(petKey)}
+                          onClick={() => setCalcPetType(key)}
                           className={`p-4 rounded-xl border text-left transition-snappy cursor-pointer ${
                             active
-                              ? 'bg-[#E6F4F1] border-[#0D9488] text-[#0F2922]'
-                              : 'bg-white border-[#D1EAE4] text-[#335249] hover:bg-[#F4FAF8]'
+                              ? 'bg-white border-2 border-[#0D9488] shadow-xs'
+                              : 'bg-white/60 border-[#D1EAE4] hover:bg-white'
                           }`}
                         >
-                          <div className="flex items-center justify-between mb-1">
-                            <span className="text-sm font-bold text-[#0F2922]">
-                              {pet.label}
-                            </span>
-                            <PawPrint
-                              className={`w-4 h-4 ${
-                                active ? 'text-[#0D9488]' : 'text-[#335249]'
-                              }`}
-                            />
+                          <div className="text-sm font-bold text-[#0F2922]">
+                            {sp.label}
                           </div>
-                          <div className="text-xs text-[#335249]">{pet.subtitle}</div>
+                          <div className="text-xs text-[#335249] mt-0.5">
+                            {sp.subtitle}
+                          </div>
                         </button>
                       );
                     })}
                   </div>
                 </div>
 
-                {/* Step 2: Pet Age */}
-                <div>
-                  <label className="block text-sm font-bold text-[#0F2922] mb-3">
-                    2. Возраст питомца
-                  </label>
+                {/* Step 2: Age Group */}
+                <div className="rounded-2xl bg-[#F4FAF8] border border-[#D1EAE4] p-6">
+                  <div className="text-xs font-bold uppercase tracking-wider text-[#0D9488] mb-3">
+                    Шаг 2 · Возрастная группа
+                  </div>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    {(Object.keys(PET_AGE_CONFIG) as PetAge[]).map((ageKey) => {
-                      const age = PET_AGE_CONFIG[ageKey];
-                      const active = calcPetAge === ageKey;
+                    {(Object.keys(PET_AGE_CONFIG) as PetAge[]).map((key) => {
+                      const age = PET_AGE_CONFIG[key];
+                      const active = calcPetAge === key;
                       return (
                         <button
-                          key={ageKey}
+                          key={key}
                           type="button"
-                          onClick={() => setCalcPetAge(ageKey)}
+                          onClick={() => setCalcPetAge(key)}
                           className={`p-4 rounded-xl border text-left transition-snappy cursor-pointer ${
                             active
-                              ? 'bg-[#E6F4F1] border-[#0D9488] text-[#0F2922]'
-                              : 'bg-white border-[#D1EAE4] text-[#335249] hover:bg-[#F4FAF8]'
+                              ? 'bg-white border-2 border-[#0D9488] shadow-xs'
+                              : 'bg-white/60 border-[#D1EAE4] hover:bg-white'
                           }`}
                         >
-                          <div className="text-sm font-bold text-[#0F2922] mb-1 tabular-nums">
+                          <div className="text-sm font-bold text-[#0F2922]">
                             {age.label}
                           </div>
-                          <div className="text-xs text-[#335249]">{age.subtitle}</div>
+                          <p className="text-xs text-[#335249] mt-1 leading-relaxed">
+                            {age.recommendation}
+                          </p>
                         </button>
                       );
                     })}
                   </div>
-                  <p className="mt-2.5 text-xs text-[#335249]">
-                    <strong className="text-[#0F2922]">Рекомендация врача: </strong>
-                    {PET_AGE_CONFIG[calcPetAge].recommendation}
-                  </p>
                 </div>
 
-                {/* Step 3: Select Program */}
-                <div>
-                  <label className="block text-sm font-bold text-[#0F2922] mb-3">
-                    3. Выберите программу чек-апа или процедуру
-                  </label>
+                {/* Step 3: Packages */}
+                <div className="rounded-2xl bg-[#F4FAF8] border border-[#D1EAE4] p-6">
+                  <div className="text-xs font-bold uppercase tracking-wider text-[#0D9488] mb-3">
+                    Шаг 3 · Выберите комплексную программу
+                  </div>
                   <div className="space-y-2.5">
                     {CALCULATOR_PACKAGES.map((pkg) => {
-                      const active = calcPackageId === pkg.id;
+                      const checked = calcPackageId === pkg.id;
                       return (
                         <button
                           key={pkg.id}
                           type="button"
                           onClick={() => setCalcPackageId(pkg.id)}
-                          className={`w-full p-4 rounded-xl border text-left transition-snappy flex items-center justify-between gap-4 cursor-pointer ${
-                            active
-                              ? 'bg-[#E6F4F1] border-[#0D9488] text-[#0F2922]'
-                              : 'bg-white border-[#D1EAE4] text-[#335249] hover:bg-[#F4FAF8]'
+                          className={`w-full p-4 rounded-xl border text-left transition-snappy cursor-pointer flex items-center justify-between gap-4 ${
+                            checked
+                              ? 'bg-white border-2 border-[#0D9488]'
+                              : 'bg-white/60 border-[#D1EAE4] hover:bg-white'
                           }`}
                         >
                           <div>
@@ -906,472 +1668,643 @@ export default function App() {
                               {pkg.title}
                             </div>
                             <div className="text-xs text-[#335249] mt-0.5">
-                              {pkg.subtitle} · Длительность {pkg.duration}
+                              {pkg.subtitle} · {pkg.duration}
                             </div>
                           </div>
-                          <div className="text-sm font-extrabold text-[#0D9488] tabular-nums whitespace-nowrap shrink-0">
-                            база {pkg.basePrice.toLocaleString('ru-RU')} ₽
+                          <div className="text-sm font-extrabold text-[#0F2922] tabular-nums whitespace-nowrap">
+                            от {pkg.basePrice.toLocaleString('ru-RU')} ₽
                           </div>
                         </button>
                       );
                     })}
                   </div>
-                </div>
 
-                {/* Step 4: Additional Options */}
-                <div>
-                  <label className="block text-sm font-bold text-[#0F2922] mb-3">
-                    4. Дополнительные опции (по желанию)
-                  </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setCalcHomeVisit((prev) => !prev)}
-                      className={`p-3.5 rounded-xl border text-left transition-snappy flex items-center justify-between gap-3 cursor-pointer ${
-                        calcHomeVisit
-                          ? 'bg-[#E6F4F1] border-[#0D9488] text-[#0F2922]'
-                          : 'bg-white border-[#D1EAE4] text-[#335249] hover:bg-[#F4FAF8]'
-                      }`}
-                    >
-                      <div className="text-xs font-semibold text-[#0F2922]">
-                        Выезд врача на дом по Москве
-                      </div>
-                      <span className="text-xs font-bold text-[#0D9488] tabular-nums whitespace-nowrap">
-                        +1 500 ₽
-                      </span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setCalcExpressLab((prev) => !prev)}
-                      className={`p-3.5 rounded-xl border text-left transition-snappy flex items-center justify-between gap-3 cursor-pointer ${
-                        calcExpressLab
-                          ? 'bg-[#E6F4F1] border-[#0D9488] text-[#0F2922]'
-                          : 'bg-white border-[#D1EAE4] text-[#335249] hover:bg-[#F4FAF8]'
-                      }`}
-                    >
-                      <div className="text-xs font-semibold text-[#0F2922]">
-                        Экспресс-анализы CITO (за 15 мин)
-                      </div>
-                      <span className="text-xs font-bold text-[#0D9488] tabular-nums whitespace-nowrap">
-                        +600 ₽
-                      </span>
-                    </button>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4 pt-4 border-t border-[#D1EAE4]">
+                    <label className="flex items-center gap-2.5 p-3 rounded-xl bg-white border border-[#D1EAE4] text-xs font-bold text-[#0F2922] cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={calcHomeVisit}
+                        onChange={(e) => setCalcHomeVisit(e.target.checked)}
+                        className="accent-[#0D9488]"
+                      />
+                      <span>Выезд врача на дом (+1 500 ₽)</span>
+                    </label>
+                    <label className="flex items-center gap-2.5 p-3 rounded-xl bg-white border border-[#D1EAE4] text-xs font-bold text-[#0F2922] cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={calcExpressLab}
+                        onChange={(e) => setCalcExpressLab(e.target.checked)}
+                        className="accent-[#0D9488]"
+                      />
+                      <span>Экспресс-лаборатория CITO (+600 ₽)</span>
+                    </label>
                   </div>
                 </div>
               </div>
 
-              {/* Right Column: Live Calculation Summary Card */}
-              <div className="lg:col-span-5 rounded-2xl bg-white border border-[#D1EAE4] p-6 sm:p-8 shadow-md">
-                <div className="flex items-center justify-between gap-3 pb-5 mb-5 border-b border-[#D1EAE4]">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-[#0D9488] text-white flex items-center justify-center shrink-0">
-                      <Calculator className="w-5 h-5" />
-                    </div>
+              {/* Right 5 Cols: Live Receipt Summary */}
+              <div className="lg:col-span-5 lg:sticky lg:top-28">
+                <div className="rounded-2xl bg-[#0F2922] text-white p-6 sm:p-8 shadow-xl">
+                  <div className="flex items-center justify-between gap-2 pb-4 border-b border-white/15">
                     <div>
-                      <h3 className="text-base font-bold text-[#0F2922]">
-                        Итоговая смета программы
+                      <div className="text-xs font-bold uppercase tracking-wider text-[#5EEAD4]">
+                        Предварительная смета
+                      </div>
+                      <h3 className="text-xl font-extrabold mt-0.5">
+                        Персональный план чек-апа
                       </h3>
-                      <p className="text-xs text-[#335249]">
-                        {PET_TYPES_CONFIG[calcPetType].label} · Возраст:{' '}
-                        {PET_AGE_CONFIG[calcPetAge].label}
-                      </p>
+                    </div>
+                    <Stethoscope className="w-7 h-7 text-[#5EEAD4]" />
+                  </div>
+
+                  <div className="py-5 space-y-3 border-b border-white/15 text-sm">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-white/75">Пациент:</span>
+                      <span className="font-bold text-right">
+                        {calculatorSummary.petConfig.label}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-white/75">Возрастная группа:</span>
+                      <span className="font-bold text-right">
+                        {calculatorSummary.ageConfig.label}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-white/75">Программа:</span>
+                      <span className="font-bold text-right max-w-[200px] truncate">
+                        {calculatorSummary.selectedPkg.title}
+                      </span>
+                    </div>
+
+                    <div className="pt-2 space-y-1.5">
+                      <div className="text-xs font-bold uppercase tracking-wider text-[#5EEAD4]">
+                        Что включено в программу:
+                      </div>
+                      {calculatorSummary.selectedPkg.includes.map((inc) => (
+                        <div key={inc} className="text-xs text-white/85">
+                          • {inc}
+                        </div>
+                      ))}
                     </div>
                   </div>
-                </div>
 
-                <div className="mb-5">
-                  <div className="text-xs font-semibold text-[#335249] mb-2">
-                    Что входит в выбранный комплекс «{selectedPackage.title}»:
-                  </div>
-                  <ul className="space-y-2.5 bg-[#F4FAF8] rounded-xl p-4 border border-[#D1EAE4]">
-                    {selectedPackage.includes.map((inc) => (
-                      <li
-                        key={inc}
-                        className="flex items-start gap-2.5 text-xs text-[#0F2922]"
-                      >
-                        <Check className="w-4 h-4 text-[#0D9488] shrink-0 mt-0.5" />
-                        <span>{inc}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                <div className="space-y-2.5 text-xs sm:text-sm pb-5 mb-5 border-b border-[#D1EAE4] tabular-nums">
-                  <div className="flex justify-between text-[#335249]">
-                    <span>Стоимость пакета (с учетом вида и возраста):</span>
-                    <span className="font-semibold text-[#0F2922]">
-                      {calculationBreakdown.adjustedPackagePrice.toLocaleString('ru-RU')} ₽
-                    </span>
-                  </div>
-                  {calcHomeVisit && (
-                    <div className="flex justify-between text-[#335249]">
-                      <span>Выезд врача с оборудованием на дом:</span>
-                      <span className="font-semibold text-[#0F2922]">1 500 ₽</span>
+                  <div className="py-5 flex items-baseline justify-between gap-4">
+                    <div>
+                      <div className="text-xs text-white/70">Итоговая стоимость</div>
+                      <div className="text-[11px] text-[#5EEAD4]">
+                        Все расходные материалы включены
+                      </div>
                     </div>
-                  )}
-                  {calcExpressLab && (
-                    <div className="flex justify-between text-[#335249]">
-                      <span>Срочная диагностика CITO (15 минут):</span>
-                      <span className="font-semibold text-[#0F2922]">600 ₽</span>
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex items-baseline justify-between gap-4 mb-6">
-                  <div>
-                    <div className="text-xs text-[#335249]">Ориентировочная сумма к оплате</div>
-                    <div className="text-[11px] text-[#0D9488] font-medium">
-                      Все расходные материалы включены
+                    <div className="text-3xl font-extrabold text-white tabular-nums">
+                      {calculatorSummary.finalTotal.toLocaleString('ru-RU')} ₽
                     </div>
                   </div>
-                  <div className="text-3xl sm:text-4xl font-extrabold text-[#0F2922] tabular-nums">
-                    {calculationBreakdown.total.toLocaleString('ru-RU')} ₽
-                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      openBookingWithContext({
+                        petType: calcPetType,
+                        serviceTitle: calculatorSummary.fullServiceTitle,
+                        estimatedPrice: calculatorSummary.finalTotal,
+                      })
+                    }
+                    className="w-full py-4 px-6 rounded-xl bg-[#F97316] hover:bg-[#EA580C] text-white font-bold text-sm sm:text-base transition-snappy inline-flex items-center justify-center gap-2 cursor-pointer shadow-lg"
+                  >
+                    <span>Записаться с этой сметой</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={handleBookFromCalculator}
-                  className="w-full py-4 px-6 rounded-xl bg-[#F97316] hover:bg-[#EA580C] text-white font-bold text-sm sm:text-base shadow-md transition-snappy flex items-center justify-center gap-2 whitespace-nowrap cursor-pointer"
-                >
-                  <span>Записаться по этому расчету</span>
-                  <ArrowRight className="w-4 h-4" />
-                </button>
-
-                <p className="text-[11px] text-center text-[#335249] mt-3">
-                  Параметры расчета автоматически подставятся в форму записи
-                </p>
               </div>
             </div>
           </div>
         </section>
 
-        {/* Google Drive Cloud Medical Card Integration (Visible strictly to Administrator) */}
-        {currentUser.role === 'admin' && currentUser.login === '1' && (
-          <GoogleDriveSection
-            appointments={appointments}
-            calculatorSummaryText={`Питомец: ${PET_TYPES_CONFIG[calcPetType].label} (${PET_AGE_CONFIG[calcPetAge].label})\nПрограмма: ${selectedPackage.title}\nИтоговая расчетная стоимость: ${calculationBreakdown.total.toLocaleString('ru-RU')} ₽`}
-            userRole={currentUser.role}
-            onGoogleLoginSuccess={handleUserChanged}
-          />
-        )}
-
-        {/* Doctors Team Section */}
-        <section id="doctors" className="py-16 lg:py-24 bg-white">
+        {/* DOCTORS & SPECIALISTS SECTION */}
+        <section id="doctors" className="py-16 lg:py-24 border-b border-[#D1EAE4]">
           <div className="max-w-7xl mx-auto px-6 lg:px-8">
             <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-12">
               <div>
-                <div className="text-xs font-semibold text-[#0D9488] mb-2">
-                  Узкопрофильные врачи · Постоянное повышение квалификации
+                <div className="text-xs font-bold uppercase tracking-wider text-[#0D9488] mb-2">
+                  Узкопрофильная экспертиза · Стаж от 8 до 14 лет
                 </div>
-                <h2 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold text-[#0F2922] tracking-tight">
-                  Команда специалистов «Лапа Помощи»
+                <h2
+                  className="font-extrabold text-[#0F2922] tracking-tight"
+                  style={{ fontSize: 'clamp(1.75rem, 2.6vw + 0.4rem, 2.5rem)' }}
+                >
+                  Ведущие ветеринарные врачи клиники
                 </h2>
               </div>
               <p className="text-sm text-[#335249] max-w-md">
-                Каждый пациент попадает к профильному специалисту: от хирурга-эндоскописта и кардиолога до ратолога по мелким грызунам.
+                Каждый специалист регулярно проходит повышение квалификации и работает по международным протоколам WSAVA и ESVS.
               </p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              {doctors.map((doctor) => (
-                <article
-                  key={doctor.id}
-                  className="rounded-2xl bg-white border border-[#D1EAE4] overflow-hidden flex flex-col justify-between transition-snappy hover:shadow-md"
+              {doctorsList.map((doc) => (
+                <div
+                  key={doc.id}
+                  className="rounded-2xl bg-white border border-[#D1EAE4] overflow-hidden flex flex-col justify-between shadow-xs hover:shadow-md transition-snappy"
                 >
                   <div>
-                    <div className="aspect-4/3 w-full bg-[#E6F4F1] overflow-hidden border-b border-[#D1EAE4]">
-                      <SmartImage
-                        src={doctor.photoUrl}
-                        alt={doctor.name}
-                        variant="doctor"
-                        label={doctor.name}
-                        sublabel={doctor.role}
+                    <div className="relative h-64 bg-[#E6F4F1] overflow-hidden">
+                      <img
+                        src={doc.photoUrl}
+                        alt={`${doc.name} — ${doc.role}`}
                         className="w-full h-full object-cover object-top"
                       />
+                      <div className="absolute top-3.5 left-3.5 px-3 py-1 rounded-lg bg-[#0F2922]/85 backdrop-blur-xs text-white text-xs font-bold tabular-nums">
+                        Стаж {doc.experienceYears} лет
+                      </div>
                     </div>
 
                     <div className="p-5">
-                      {/* Unboxed metadata with middle dot separator */}
-                      <div className="flex items-center gap-1.5 text-xs text-[#0D9488] font-semibold mb-1.5 tabular-nums">
-                        <span>Стаж {doctor.experienceYears} лет</span>
-                        <span aria-hidden="true">·</span>
-                        <span>{doctor.operationsCount}</span>
+                      <div className="text-xs font-bold text-[#0D9488] uppercase tracking-wider mb-1">
+                        {doc.role}
                       </div>
-
-                      <h3 className="text-base font-bold text-[#0F2922] mb-1">
-                        {doctor.name}
+                      <h3 className="text-lg font-extrabold text-[#0F2922] mb-2">
+                        {doc.name}
                       </h3>
-                      <p className="text-xs font-medium text-[#335249] mb-3">
-                        {doctor.role}
-                      </p>
 
-                      <p className="text-[11px] text-[#335249] mb-3">
-                        {doctor.education}
-                      </p>
-
-                      {/* Doctor Quote in subtle surface container (no thick left border) */}
-                      <div className="rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] p-3.5 text-xs text-[#0F2922] leading-relaxed mb-4">
-                        «{doctor.quote}»
+                      <div className="text-xs font-semibold text-[#335249] bg-[#F4FAF8] border border-[#D1EAE4] rounded-lg px-3 py-2 mb-3">
+                        Практика: <strong className="text-[#0F2922]">{doc.operationsCount}</strong>
                       </div>
 
-                      <div className="text-[11px] text-[#335249]">
-                        <span className="font-semibold text-[#0F2922]">Профиль: </span>
-                        {doctor.specialties.join(' · ')}
+                      <p className="text-xs text-[#335249] mb-3 leading-relaxed">
+                        <strong className="text-[#0F2922]">Образование:</strong>{' '}
+                        {doc.education}
+                      </p>
+
+                      <blockquote className="text-xs italic text-[#0F2922] border-l-2 border-[#0D9488] pl-3 py-1 mb-4 bg-[#F4FAF8]/60 rounded-r-lg">
+                        «{doc.quote}»
+                      </blockquote>
+
+                      <div className="flex flex-wrap gap-1.5">
+                        {doc.specialties.map((spec) => (
+                          <span
+                            key={spec}
+                            className="text-[11px] font-semibold px-2.5 py-1 rounded-md bg-[#E6F4F1] text-[#0F766E]"
+                          >
+                            {spec}
+                          </span>
+                        ))}
                       </div>
                     </div>
                   </div>
 
-                  <div className="px-5 pb-5">
+                  <div className="px-5 pb-5 pt-3 border-t border-[#D1EAE4]">
                     <button
                       type="button"
                       onClick={() =>
-                        openGeneralBooking({
-                          doctorName: doctor.name,
+                        openBookingWithContext({
+                          doctorName: doc.name,
                         })
                       }
-                      className="w-full py-2.5 px-4 rounded-xl bg-[#E6F4F1] hover:bg-[#0D9488] text-[#0F2922] hover:text-white text-xs font-bold transition-snappy whitespace-nowrap cursor-pointer"
+                      className="w-full py-2.5 px-4 rounded-xl bg-[#0D9488] hover:bg-[#0F766E] text-white font-bold text-xs transition-snappy cursor-pointer"
                     >
                       Записаться к врачу
                     </button>
                   </div>
-                </article>
+                </div>
               ))}
             </div>
           </div>
         </section>
 
-        {/* Testimonials Section (Claim-to-Proof Adjacency) */}
+        {/* PATIENT STORIES & VERIFIED REVIEWS */}
         <section
           id="reviews"
-          className="py-16 lg:py-24 bg-[#F4FAF8] border-y border-[#D1EAE4]"
+          className="py-16 lg:py-24 bg-white border-b border-[#D1EAE4]"
         >
           <div className="max-w-7xl mx-auto px-6 lg:px-8">
-            <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-12">
+            <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 mb-12">
               <div>
-                <div className="text-xs font-semibold text-[#0D9488] mb-2">
-                  Реальные истории спасения и лечения · Рейтинг 4.9 на Яндекс Картах
+                <div className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#0D9488] mb-2">
+                  <HeartHandshake className="w-4 h-4" />
+                  <span>Истории выздоровления и отзывы владельцев</span>
                 </div>
-                <h2 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold text-[#0F2922] tracking-tight">
-                  Отзывы владельцев и истории пациентов
+                <h2
+                  className="font-extrabold text-[#0F2922] tracking-tight"
+                  style={{ fontSize: 'clamp(1.75rem, 2.6vw + 0.4rem, 2.5rem)' }}
+                >
+                  Реальные клинические случаи наших пациентов
                 </h2>
               </div>
-              <button
-                type="button"
-                onClick={() => openGeneralBooking()}
-                className="py-3 px-5 rounded-xl bg-[#0D9488] hover:bg-[#0F766E] text-white text-xs sm:text-sm font-semibold transition-snappy whitespace-nowrap self-start md:self-auto cursor-pointer"
-              >
-                Записаться на консультацию
-              </button>
-            </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {TESTIMONIALS_DATA.map((item) => (
-                <article
-                  key={item.id}
-                  className="rounded-2xl bg-white border border-[#D1EAE4] p-6 sm:p-7 flex flex-col justify-between"
-                >
-                  <div>
-                    {/* Header: Pet Avatar + Owner + Rating */}
-                    <div className="flex items-start justify-between gap-4 mb-4">
-                      <div className="flex items-center gap-3.5">
-                        <div className="w-14 h-14 rounded-2xl overflow-hidden border border-[#D1EAE4] bg-[#E6F4F1] shrink-0">
-                          <SmartImage
-                            src={item.photoUrl}
-                            alt={`${item.petName} — ${item.petBreed}`}
-                            variant="pet"
-                            label={item.petName}
-                            sublabel={item.petBreed}
-                            className="w-full h-full object-cover"
-                          />
-                        </div>
-                        <div>
-                          <h3 className="text-base font-bold text-[#0F2922]">
-                            {item.ownerName}
-                          </h3>
-                          <div className="text-xs text-[#335249]">{item.ownerRole}</div>
-                          <div className="text-xs font-semibold text-[#0D9488] mt-0.5">
-                            Пациент: {item.petName} ({item.petBreed})
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-1 text-xs font-bold text-[#0F2922] shrink-0 tabular-nums">
-                        <div className="flex items-center text-[#F97316]" aria-hidden="true">
-                          {[...Array(item.rating)].map((_, idx) => (
-                            <Star key={idx} className="w-3.5 h-3.5 fill-current" />
-                          ))}
-                        </div>
-                        <span className="ml-1">5.0</span>
-                      </div>
-                    </div>
-
-                    {/* Concrete Outcome Summary */}
-                    <div className="rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] px-4 py-2.5 mb-4 text-xs font-semibold text-[#0F2922]">
-                      Результат: {item.beforeAfterOutcome}
-                    </div>
-
-                    <p className="text-sm text-[#335249] leading-relaxed mb-5">
-                      «{item.story}»
-                    </p>
-                  </div>
-
-                  {/* Unboxed bottom metadata */}
-                  <div className="pt-4 border-t border-[#D1EAE4] flex flex-wrap items-center gap-2 text-xs text-[#335249]">
-                    <span className="font-medium text-[#0F2922]">{item.serviceUsed}</span>
-                    <span aria-hidden="true">·</span>
-                    <span>{item.visitDate}</span>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* FAQ Accordion Section */}
-        <section id="faq" className="py-16 lg:py-24 bg-white">
-          <div className="max-w-7xl mx-auto px-6 lg:px-8">
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-start">
-              <div className="lg:col-span-4">
-                <div className="text-xs font-semibold text-[#0D9488] mb-2">
-                  Памятка заботливому владельцу
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="px-4 py-2.5 rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] text-xs font-bold text-[#0F2922] tabular-nums">
+                  Рейтинг клиники: <span className="text-[#0D9488]">4.9 / 5.0</span>
                 </div>
-                <h2 className="text-2xl sm:text-3xl font-extrabold text-[#0F2922] tracking-tight mb-4">
-                  Частые вопросы перед визитом в клинику
-                </h2>
-                <p className="text-sm text-[#335249] leading-relaxed mb-6">
-                  Собрали подробные ответы наших врачей о подготовке к анализам, работе круглосуточного стационара и правилах выезда на дом.
-                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (currentUser.authSource === 'guest') {
+                      setAuthReasonMessage(
+                        'Для публикации отзыва войдите через аккаунт Google.'
+                      );
+                      setAuthModalOpen(true);
+                      return;
+                    }
+                    setReviewFormOpen((prev) => !prev);
+                  }}
+                  className="py-2.5 px-4 rounded-xl bg-[#0D9488] hover:bg-[#0F766E] text-white text-xs font-bold inline-flex items-center gap-2 transition-snappy cursor-pointer"
+                >
+                  <MessageSquarePlus className="w-4 h-4" />
+                  <span>Оставить отзыв о визите</span>
+                </button>
+              </div>
+            </div>
 
-                <div className="rounded-2xl bg-[#F4FAF8] border border-[#D1EAE4] p-5">
-                  <div className="flex items-center gap-3 mb-2">
-                    <HeartHandshake className="w-5 h-5 text-[#0D9488]" />
-                    <h3 className="text-sm font-bold text-[#0F2922]">
-                      Нужна консультация дежурного врача?
-                    </h3>
-                  </div>
-                  <p className="text-xs text-[#335249] leading-relaxed mb-4">
-                    Позвоните нам или оставьте заявку — подскажем, нужна ли голодная диета и как бережно довезти питомца.
-                  </p>
+            {reviewFormOpen && (
+              <form
+                onSubmit={handleAddReviewSubmit}
+                className="mb-12 rounded-2xl bg-[#F4FAF8] border-2 border-[#0D9488] p-6 sm:p-8 space-y-4"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-lg font-extrabold text-[#0F2922]">
+                    Поделитесь историей лечения вашего питомца
+                  </h3>
                   <button
                     type="button"
-                    onClick={() => openGeneralBooking()}
-                    className="w-full py-2.5 px-4 rounded-xl bg-[#0D9488] hover:bg-[#0F766E] text-white text-xs font-semibold transition-snappy whitespace-nowrap cursor-pointer"
+                    onClick={() => setReviewFormOpen(false)}
+                    className="text-xs font-semibold text-[#335249] hover:text-[#0F2922]"
                   >
-                    Задать вопрос и записаться
+                    Закрыть
                   </button>
                 </div>
-              </div>
 
-              <div className="lg:col-span-8 space-y-3">
-                {FAQ_DATA.map((faq) => {
-                  const isOpen = openFaqId === faq.id;
-                  return (
-                    <div
-                      key={faq.id}
-                      className="rounded-2xl border border-[#D1EAE4] bg-white overflow-hidden transition-snappy"
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-[#0F2922] mb-1">
+                      Ваше имя *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={newReviewOwner}
+                      onChange={(e) => setNewReviewOwner(e.target.value)}
+                      placeholder="Например, Ольга К."
+                      className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#D1EAE4] bg-white focus:outline-none focus:border-[#0D9488]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-[#0F2922] mb-1">
+                      Кличка питомца *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={newReviewPetName}
+                      onChange={(e) => setNewReviewPetName(e.target.value)}
+                      placeholder="Например, Персик"
+                      className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#D1EAE4] bg-white focus:outline-none focus:border-[#0D9488]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-[#0F2922] mb-1">
+                      Порода и возраст
+                    </label>
+                    <input
+                      type="text"
+                      value={newReviewPetBreed}
+                      onChange={(e) => setNewReviewPetBreed(e.target.value)}
+                      placeholder="Вельш-корги, 3 года"
+                      className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#D1EAE4] bg-white focus:outline-none focus:border-[#0D9488]"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-[#0F2922] mb-1">
+                      Какую услугу проходили
+                    </label>
+                    <select
+                      value={newReviewService}
+                      onChange={(e) => setNewReviewService(e.target.value)}
+                      className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#D1EAE4] bg-white focus:outline-none focus:border-[#0D9488]"
                     >
-                      <button
-                        type="button"
-                        onClick={() => setOpenFaqId(isOpen ? '' : faq.id)}
-                        aria-expanded={isOpen}
-                        className="w-full px-6 py-5 text-left flex items-center justify-between gap-4 hover:bg-[#F4FAF8] transition-snappy cursor-pointer"
-                      >
-                        <div>
-                          <div className="text-xs font-semibold text-[#0D9488] mb-1">
-                            {faq.category}
-                          </div>
-                          <div className="text-sm sm:text-base font-bold text-[#0F2922]">
-                            {faq.question}
-                          </div>
-                        </div>
-                        <div
-                          className={`w-8 h-8 rounded-lg bg-[#E6F4F1] text-[#0D9488] flex items-center justify-center shrink-0 transition-transform duration-150 ${
-                            isOpen ? 'rotate-180' : ''
-                          }`}
-                        >
-                          <ChevronDown className="w-4 h-4" />
-                        </div>
-                      </button>
+                      {servicesList.map((s) => (
+                        <option key={s.id} value={s.title}>
+                          {s.title}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-[#0F2922] mb-1">
+                      Краткий результат (До → После)
+                    </label>
+                    <input
+                      type="text"
+                      value={newReviewOutcome}
+                      onChange={(e) => setNewReviewOutcome(e.target.value)}
+                      placeholder="Например: Провели УЗИ и сняли острую боль за 1 визит"
+                      className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#D1EAE4] bg-white focus:outline-none focus:border-[#0D9488]"
+                    />
+                  </div>
+                </div>
 
-                      {isOpen && (
-                        <div className="px-6 pb-5 pt-2 text-sm text-[#335249] leading-relaxed border-t border-[#D1EAE4] bg-[#F4FAF8]/50">
-                          {faq.answer}
-                        </div>
-                      )}
-                    </div>
+                <div>
+                  <label className="block text-xs font-bold text-[#0F2922] mb-1">
+                    Ваш отзыв о работе врача и клиники *
+                  </label>
+                  <textarea
+                    rows={3}
+                    required
+                    value={newReviewStory}
+                    onChange={(e) => setNewReviewStory(e.target.value)}
+                    placeholder="Расскажите, как прошел прием..."
+                    className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#D1EAE4] bg-white focus:outline-none focus:border-[#0D9488]"
+                  />
+                </div>
+
+                <div className="flex justify-end">
+                  <button
+                    type="submit"
+                    className="py-2.5 px-6 rounded-xl bg-[#F97316] hover:bg-[#EA580C] text-white text-sm font-bold cursor-pointer"
+                  >
+                    Опубликовать историю
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* Species Segmented Filter Bar */}
+            <div className="mb-8 flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-[#D1EAE4]">
+              <div className="flex flex-wrap items-center gap-2">
+                {(
+                  [
+                    {
+                      id: 'all' as ReviewSpeciesFilter,
+                      label: 'Все истории',
+                      count: reviewSpeciesCounts.all,
+                    },
+                    {
+                      id: 'dogs' as ReviewSpeciesFilter,
+                      label: 'Собаки',
+                      count: reviewSpeciesCounts.dogs,
+                    },
+                    {
+                      id: 'cats' as ReviewSpeciesFilter,
+                      label: 'Кошки',
+                      count: reviewSpeciesCounts.cats,
+                    },
+                    {
+                      id: 'exotic' as ReviewSpeciesFilter,
+                      label: 'Кролики и грызуны',
+                      count: reviewSpeciesCounts.exotic,
+                    },
+                  ] as const
+                ).map((tab) => {
+                  const isActive = reviewSpeciesFilter === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setReviewSpeciesFilter(tab.id)}
+                      className={`py-2 px-4 rounded-xl text-xs sm:text-sm font-bold transition-snappy inline-flex items-center gap-2 cursor-pointer ${
+                        isActive
+                          ? 'bg-[#0D9488] text-white shadow-xs'
+                          : 'bg-[#F4FAF8] text-[#335249] border border-[#D1EAE4] hover:border-[#0D9488] hover:text-[#0F2922]'
+                      }`}
+                    >
+                      <span>{tab.label}</span>
+                      <span
+                        className={`px-1.5 py-0.5 rounded-md text-[11px] font-extrabold tabular-nums ${
+                          isActive
+                            ? 'bg-white/20 text-white'
+                            : 'bg-[#E6F4F1] text-[#0D9488]'
+                        }`}
+                      >
+                        {tab.count}
+                      </span>
+                    </button>
                   );
                 })}
               </div>
+
+              <div className="text-xs text-[#335249] font-medium tabular-nums">
+                Показано клинических историй:{' '}
+                <strong className="text-[#0F2922]">{filteredReviews.length}</strong> из{' '}
+                {reviews.length}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
+              {filteredReviews.map((rev) => (
+                <div
+                  key={rev.id}
+                  className="rounded-2xl bg-white border border-[#D1EAE4] p-6 flex flex-col justify-between shadow-xs hover:border-[#0D9488]/50 transition-snappy"
+                >
+                  <div>
+                    <div className="flex items-center justify-between gap-3 mb-4">
+                      <div className="flex items-center gap-3.5 min-w-0">
+                        <img
+                          src={rev.photoUrl}
+                          alt={rev.petName}
+                          className="w-12 h-12 rounded-xl object-cover border border-[#D1EAE4] shrink-0"
+                        />
+                        <div className="min-w-0">
+                          <div className="text-sm font-extrabold text-[#0F2922] truncate">
+                            {rev.ownerName}
+                          </div>
+                          <div className="text-xs font-semibold text-[#0D9488] truncate">
+                            {rev.petName} · {rev.petBreed}
+                          </div>
+                          {rev.ownerRole && (
+                            <div className="text-[11px] text-[#335249] truncate">
+                              {rev.ownerRole}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-0.5 text-[#F59E0B] shrink-0">
+                        {Array.from({ length: rev.rating }).map((_, idx) => (
+                          <Star
+                            key={idx}
+                            className="w-3.5 h-3.5 fill-[#F59E0B]"
+                          />
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="mb-3 p-3 rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] text-xs font-semibold text-[#0F766E]">
+                      Итог лечения: {rev.beforeAfterOutcome}
+                    </div>
+
+                    <p className="text-xs sm:text-sm text-[#335249] leading-relaxed mb-4">
+                      «{rev.story}»
+                    </p>
+                  </div>
+
+                  <div className="pt-3 border-t border-[#D1EAE4] flex items-center justify-between gap-2 text-[11px] text-[#335249]">
+                    <span className="font-semibold text-[#0D9488] truncate max-w-[72%]">
+                      {rev.serviceUsed}
+                    </span>
+                    <span className="tabular-nums shrink-0">{rev.visitDate}</span>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </section>
 
-        {/* Contacts & Stylized Interactive Map Section */}
-        <section
-          id="contacts"
-          className="py-16 lg:py-24 bg-[#F4FAF8] border-t border-[#D1EAE4]"
-        >
+        {/* FIRST AID SYMPTOMS & FAQ */}
+        <section className="py-16 lg:py-24 border-b border-[#D1EAE4]">
+          <div className="max-w-7xl mx-auto px-6 lg:px-8">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
+              <div className="lg:col-span-6 space-y-5">
+                <div>
+                  <div className="text-xs font-bold uppercase tracking-wider text-[#0D9488] mb-1.5">
+                    Памятка экстренной помощи до приезда в клинику
+                  </div>
+                  <h2 className="text-2xl sm:text-3xl font-extrabold text-[#0F2922] tracking-tight">
+                    Экстренные симптомы и первая помощь
+                  </h2>
+                </div>
+
+                <div className="space-y-2">
+                  {EMERGENCY_SYMPTOMS.map((symptom) => {
+                    const active = symptom.id === activeSymptomId;
+                    return (
+                      <button
+                        key={symptom.id}
+                        type="button"
+                        onClick={() => setActiveSymptomId(symptom.id)}
+                        className={`w-full p-3.5 rounded-xl border text-left text-xs sm:text-sm font-bold transition-snappy cursor-pointer ${
+                          active
+                            ? 'bg-[#0F2922] text-white border-[#0F2922]'
+                            : 'bg-white border-[#D1EAE4] text-[#0F2922] hover:bg-[#E6F4F1]/50'
+                        }`}
+                      >
+                        {symptom.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="rounded-2xl bg-white border border-[#D1EAE4] p-6 space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold uppercase tracking-wider px-2.5 py-1 rounded-md bg-red-50 text-red-700 border border-red-200">
+                      {activeSymptom.severity === 'critical'
+                        ? 'Критическое состояние · Срочно в реанимацию'
+                        : 'Требуется осмотр в ближайшие часы'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setEmergencyModalOpen(true)}
+                      className="text-xs font-bold text-[#F97316] hover:underline cursor-pointer"
+                    >
+                      Вызвать бригаду →
+                    </button>
+                  </div>
+                  <p className="text-xs sm:text-sm text-[#335249] leading-relaxed">
+                    <strong className="text-[#0F2922]">Инструкция врача:</strong>{' '}
+                    {activeSymptom.firstAid}
+                  </p>
+                </div>
+              </div>
+
+              {/* FAQ Accordion */}
+              <div className="lg:col-span-6 space-y-5">
+                <div>
+                  <div className="text-xs font-bold uppercase tracking-wider text-[#0D9488] mb-1.5">
+                    Ответы главного врача
+                  </div>
+                  <h2 className="text-2xl sm:text-3xl font-extrabold text-[#0F2922] tracking-tight">
+                    Частые вопросы перед визитом
+                  </h2>
+                </div>
+
+                <div className="space-y-3">
+                  {FAQ_DATA.map((faq) => {
+                    const isOpen = openFaqId === faq.id;
+                    return (
+                      <div
+                        key={faq.id}
+                        className="rounded-2xl bg-white border border-[#D1EAE4] overflow-hidden"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setOpenFaqId(isOpen ? '' : faq.id)}
+                          className="w-full px-5 py-4 text-left flex items-center justify-between gap-4 cursor-pointer"
+                        >
+                          <span className="text-sm font-bold text-[#0F2922]">
+                            {faq.question}
+                          </span>
+                          <ChevronDown
+                            className={`w-4 h-4 text-[#0D9488] shrink-0 transition-transform ${
+                              isOpen ? 'rotate-180' : ''
+                            }`}
+                          />
+                        </button>
+                        {isOpen && (
+                          <div className="px-5 pb-4 text-xs sm:text-sm text-[#335249] leading-relaxed border-t border-[#D1EAE4]/60 pt-3">
+                            {faq.answer}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* LOCATION, DIRECTIONS & CONTACTS SECTION */}
+        <section id="contacts" className="py-16 lg:py-24 bg-[#F4FAF8]">
           <div className="max-w-7xl mx-auto px-6 lg:px-8">
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch">
-              {/* Left Contact Details Card */}
-              <div className="lg:col-span-5 rounded-2xl bg-white border border-[#D1EAE4] p-6 sm:p-8 flex flex-col justify-between">
-                <div>
-                  <div className="text-xs font-semibold text-[#0D9488] mb-2">
-                    Круглосуточный прием и парковка у входа
+              <div className="lg:col-span-5 rounded-2xl bg-white border border-[#D1EAE4] p-6 sm:p-8 flex flex-col justify-between shadow-xs">
+                <div className="space-y-5">
+                  <div>
+                    <div className="text-xs font-bold uppercase tracking-wider text-[#0D9488] mb-1">
+                      Круглосуточный прием · {CLINIC_INFO.city}
+                    </div>
+                    <h2 className="text-2xl font-extrabold text-[#0F2922]">
+                      Как добраться в клинику «{CLINIC_INFO.name}»
+                    </h2>
                   </div>
-                  <h2 className="text-2xl sm:text-3xl font-extrabold text-[#0F2922] tracking-tight mb-6">
-                    Контакты и схема проезда
-                  </h2>
 
-                  <div className="space-y-5 text-sm">
-                    <div className="flex items-start gap-3.5">
-                      <div className="w-10 h-10 rounded-xl bg-[#E6F4F1] text-[#0D9488] flex items-center justify-center shrink-0">
-                        <MapPin className="w-5 h-5" />
-                      </div>
+                  <div className="space-y-3.5 text-sm">
+                    <div className="flex items-start gap-3">
+                      <MapPin className="w-5 h-5 text-[#0D9488] shrink-0 mt-0.5" />
                       <div>
-                        <div className="text-xs text-[#335249]">Адрес клиники в Москве</div>
-                        <div className="font-bold text-[#0F2922] mt-0.5">
+                        <div className="font-bold text-[#0F2922]">
                           {CLINIC_INFO.address}
                         </div>
-                        <div className="text-xs text-[#335249] mt-0.5">
-                          Отдельный вход с первого этажа, пандус и бесплатная парковка со шлагбаумом для пациентов
+                        <div className="text-xs text-[#335249]">
+                          Собственная бесплатная парковка для клиентов у входа
                         </div>
                       </div>
                     </div>
 
-                    <div className="flex items-start gap-3.5">
-                      <div className="w-10 h-10 rounded-xl bg-[#E6F4F1] text-[#0D9488] flex items-center justify-center shrink-0">
-                        <Phone className="w-5 h-5" />
-                      </div>
+                    <div className="flex items-start gap-3">
+                      <Phone className="w-5 h-5 text-[#0D9488] shrink-0 mt-0.5" />
                       <div>
-                        <div className="text-xs text-[#335249]">
-                          Круглосуточный телефон и вызов на дом
-                        </div>
                         <a
                           href={`tel:${CLINIC_INFO.phoneRaw}`}
-                          className="text-lg font-extrabold text-[#0F2922] hover:text-[#0D9488] tabular-nums block mt-0.5"
+                          className="font-extrabold text-base text-[#0F2922] hover:text-[#0D9488] tabular-nums"
                         >
                           {CLINIC_INFO.phoneDisplay}
                         </a>
                         <div className="text-xs text-[#335249]">
-                          Дежурный администратор отвечает за 15 секунд
+                          Многоканальный телефон и дежурный реаниматолог 24/7
                         </div>
                       </div>
                     </div>
 
-                    <div className="flex items-start gap-3.5">
-                      <div className="w-10 h-10 rounded-xl bg-[#E6F4F1] text-[#0D9488] flex items-center justify-center shrink-0">
-                        <Clock className="w-5 h-5" />
-                      </div>
+                    <div className="flex items-start gap-3">
+                      <Clock className="w-5 h-5 text-[#0D9488] shrink-0 mt-0.5" />
                       <div>
-                        <div className="text-xs text-[#335249]">Режим работы</div>
-                        <div className="font-bold text-[#0F2922] mt-0.5">
+                        <div className="font-bold text-[#0F2922]">
                           {CLINIC_INFO.schedule}
                         </div>
-                        <div className="text-xs text-[#335249] mt-0.5">
-                          Ночной прием без наценок по предварительной записи
+                        <div className="text-xs text-[#335249]">
+                          {CLINIC_INFO.licenseNumber}
                         </div>
                       </div>
                     </div>
@@ -1381,219 +2314,70 @@ export default function App() {
                 <div className="pt-6 mt-6 border-t border-[#D1EAE4] flex flex-col sm:flex-row gap-3">
                   <button
                     type="button"
-                    onClick={() => openGeneralBooking()}
-                    className="flex-1 py-3.5 px-5 rounded-xl bg-[#F97316] hover:bg-[#EA580C] text-white font-bold text-xs sm:text-sm transition-snappy whitespace-nowrap cursor-pointer"
+                    onClick={() => openBookingWithContext()}
+                    className="flex-1 py-3 px-4 rounded-xl bg-[#F97316] hover:bg-[#EA580C] text-white font-bold text-xs sm:text-sm text-center cursor-pointer"
                   >
                     Записаться на визит
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setEmergencyModalOpen(true)}
-                    className="py-3.5 px-4 rounded-xl bg-[#E6F4F1] hover:bg-[#D1EAE4] text-[#0F2922] font-semibold text-xs sm:text-sm transition-snappy whitespace-nowrap cursor-pointer"
+                  <a
+                    href={`https://yandex.ru/maps/?text=${encodeURIComponent(
+                      `${CLINIC_INFO.city}, ${CLINIC_INFO.address}`
+                    )}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="py-3 px-4 rounded-xl bg-[#E6F4F1] hover:bg-[#D1EAE4] text-[#0F2922] font-bold text-xs sm:text-sm inline-flex items-center justify-center gap-1.5"
                   >
-                    Вызвать врача на дом
-                  </button>
+                    <Navigation className="w-4 h-4 text-[#0D9488]" />
+                    <span>Яндекс.Навигатор</span>
+                  </a>
                 </div>
               </div>
 
-              {/* Right Interactive Stylized Map Card */}
-              <div className="lg:col-span-7 rounded-2xl bg-white border border-[#D1EAE4] p-6 flex flex-col justify-between">
-                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-                  <div>
-                    <h3 className="text-base font-bold text-[#0F2922]">
-                      Интерактивная карта маршрута (ЮЗАО, м. Новые Черёмушки)
-                    </h3>
-                    <p className="text-xs text-[#335249]">
-                      Выберите способ прибытия, чтобы посмотреть ориентиры и подъезд
+              <div className="lg:col-span-7 rounded-2xl bg-[#0F2922] text-white p-6 sm:p-8 flex flex-col justify-between relative overflow-hidden">
+                <div className="relative z-10 space-y-4">
+                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-white/10 text-[#5EEAD4] text-xs font-bold">
+                    Схема проезда и отдельный вход для экстренных пациентов
+                  </div>
+                  <h3 className="text-xl sm:text-2xl font-extrabold">
+                    Удобный подъезд и встреча тяжелых пациентов у автомобиля
+                  </h3>
+                  <p className="text-xs sm:text-sm text-white/80 max-w-xl leading-relaxed">
+                    Для крупных собак и экстренных пациентов у входа дежурит санитар с каталкой. Позвоните за 3 минуты до подъезда — мы откроем шлагбаум и встретим вас.
+                  </p>
+                </div>
+
+                <div className="relative z-10 grid grid-cols-1 sm:grid-cols-3 gap-4 my-6">
+                  <div className="rounded-xl bg-white/10 border border-white/15 p-4">
+                    <div className="text-xs font-bold text-[#5EEAD4] mb-1">
+                      На автомобиле
+                    </div>
+                    <p className="text-xs text-white/85 leading-relaxed">
+                      Свободный заезд с ул. Профсоюзная. Выделенная парковка 6 мест прямо перед входом в клинику.
                     </p>
                   </div>
-
-                  <div className="inline-flex items-center gap-1 p-1 bg-[#F4FAF8] border border-[#D1EAE4] rounded-xl">
-                    {(
-                      [
-                        { id: 'metro', label: 'Пешком от метро' },
-                        { id: 'car', label: 'На автомобиле' },
-                        { id: 'emergency', label: 'Вход в реанимацию' },
-                      ] as const
-                    ).map((mode) => (
-                      <button
-                        key={mode.id}
-                        type="button"
-                        onClick={() => setMapRouteMode(mode.id)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-snappy whitespace-nowrap cursor-pointer ${
-                          mapRouteMode === mode.id
-                            ? 'bg-[#0D9488] text-white'
-                            : 'text-[#335249] hover:text-[#0F2922]'
-                        }`}
-                      >
-                        {mode.label}
-                      </button>
-                    ))}
+                  <div className="rounded-xl bg-white/10 border border-white/15 p-4">
+                    <div className="text-xs font-bold text-[#5EEAD4] mb-1">
+                      От метро Новые Черёмушки
+                    </div>
+                    <p className="text-xs text-white/85 leading-relaxed">
+                      3 минуты пешком от выхода №2 по освещенному бульвару без ступенек и переходов.
+                    </p>
+                  </div>
+                  <div className="rounded-xl bg-white/10 border border-white/15 p-4">
+                    <div className="text-xs font-bold text-[#FDBA74] mb-1">
+                      Инфекционный бокс
+                    </div>
+                    <p className="text-xs text-white/85 leading-relaxed">
+                      Отдельный изолированный бокс с торца здания для невакцинированных животных с температурой.
+                    </p>
                   </div>
                 </div>
 
-                {/* Stylized Vector Map of Profsoyuznaya St & Clinic */}
-                <div className="relative rounded-xl overflow-hidden border border-[#D1EAE4] bg-[#E6F4F1] aspect-16/9 w-full">
-                  <svg
-                    viewBox="0 0 800 450"
-                    className="w-full h-full object-cover"
-                    role="img"
-                    aria-label="Схема проезда к ветеринарной клинике Лапа Помощи на улице Профсоюзная, 45"
-                  >
-                    <rect width="800" height="450" fill="#E6F4F1" />
-                    {/* Park zones & city blocks */}
-                    <rect x="40" y="30" width="240" height="150" rx="16" fill="#D1EAE4" />
-                    <rect x="340" y="30" width="420" height="140" rx="16" fill="#FFFFFF" fillOpacity="0.7" />
-                    <rect x="40" y="250" width="230" height="160" rx="16" fill="#FFFFFF" fillOpacity="0.7" />
-                    <rect x="350" y="250" width="410" height="160" rx="16" fill="#D1EAE4" />
-
-                    {/* Roads: Profsoyuznaya Street & Garibaldi Street */}
-                    <path d="M0 215 H800" stroke="#FFFFFF" strokeWidth="42" />
-                    <path d="M310 0 V450" stroke="#FFFFFF" strokeWidth="36" />
-                    <path
-                      d="M0 215 H800"
-                      stroke="#99C7BC"
-                      strokeWidth="2"
-                      strokeDasharray="10 10"
-                    />
-                    <text
-                      x="540"
-                      y="220"
-                      fontFamily="Manrope, sans-serif"
-                      fontSize="13"
-                      fontWeight="700"
-                      fill="#335249"
-                    >
-                      УЛ. ПРОФСОЮЗНАЯ
-                    </text>
-
-                    {/* Metro Station Marker (Novye Cheryomushki) */}
-                    <g transform="translate(150, 215)">
-                      <circle cx="0" cy="0" r="22" fill="#F97316" stroke="#FFFFFF" strokeWidth="4" />
-                      <text
-                        x="0"
-                        y="5"
-                        textAnchor="middle"
-                        fontFamily="Manrope, sans-serif"
-                        fontSize="15"
-                        fontWeight="800"
-                        fill="#FFFFFF"
-                      >
-                        М
-                      </text>
-                      <rect
-                        x="-85"
-                        y="28"
-                        width="170"
-                        height="26"
-                        rx="8"
-                        fill="#0F2922"
-                      />
-                      <text
-                        x="0"
-                        y="45"
-                        textAnchor="middle"
-                        fontFamily="Manrope, sans-serif"
-                        fontSize="11"
-                        fontWeight="700"
-                        fill="#FFFFFF"
-                      >
-                        м. Новые Черёмушки (Выход 2)
-                      </text>
-                    </g>
-
-                    {/* Highlighted Route Path based on selected mode */}
-                    {mapRouteMode === 'metro' && (
-                      <path
-                        d="M172 215 H310 V120 H470"
-                        fill="none"
-                        stroke="#0D9488"
-                        strokeWidth="6"
-                        strokeLinecap="round"
-                        strokeDasharray="10 8"
-                      />
-                    )}
-                    {mapRouteMode === 'car' && (
-                      <path
-                        d="M780 215 H520 V140"
-                        fill="none"
-                        stroke="#F97316"
-                        strokeWidth="6"
-                        strokeLinecap="round"
-                      />
-                    )}
-                    {mapRouteMode === 'emergency' && (
-                      <path
-                        d="M310 430 V105 H470"
-                        fill="none"
-                        stroke="#EA580C"
-                        strokeWidth="6"
-                        strokeLinecap="round"
-                      />
-                    )}
-
-                    {/* Clinic Building Pin */}
-                    <g transform="translate(510, 105)">
-                      <rect
-                        x="-95"
-                        y="-45"
-                        width="190"
-                        height="90"
-                        rx="18"
-                        fill="#0D9488"
-                        stroke="#FFFFFF"
-                        strokeWidth="4"
-                      />
-                      <text
-                        x="0"
-                        y="-12"
-                        textAnchor="middle"
-                        fontFamily="Manrope, sans-serif"
-                        fontSize="15"
-                        fontWeight="800"
-                        fill="#FFFFFF"
-                      >
-                        «ЛАПА ПОМОЩИ» 24/7
-                      </text>
-                      <text
-                        x="0"
-                        y="10"
-                        textAnchor="middle"
-                        fontFamily="Manrope, sans-serif"
-                        fontSize="12"
-                        fontWeight="600"
-                        fill="#E6F4F1"
-                      >
-                        ул. Профсоюзная, д. 45
-                      </text>
-                      <text
-                        x="0"
-                        y="28"
-                        textAnchor="middle"
-                        fontFamily="Manrope, sans-serif"
-                        fontSize="11"
-                        fontWeight="500"
-                        fill="#FFFFFF"
-                      >
-                        Парковка P1 · Вход с 1 этажа
-                      </text>
-                    </g>
-                  </svg>
-                </div>
-
-                {/* Route Instructions Footer */}
-                <div className="mt-4 rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] p-4 flex items-center justify-between gap-4 text-xs text-[#0F2922]">
-                  <div className="flex items-center gap-2.5">
-                    <Navigation className="w-4 h-4 text-[#0D9488] shrink-0" />
-                    <span>
-                      {mapRouteMode === 'metro' &&
-                        'Пешком 3 минуты (240 м): выход №2 из м. Новые Черёмушки, прямо вдоль ул. Профсоюзная до дома 45 с мятной вывеской «Лапа Помощи».'}
-                      {mapRouteMode === 'car' &&
-                        'На автомобиле: съезд с дублера ул. Профсоюзная к шлагбауму клиники. Позвоните за 2 минуты до приезда — администратор откроет бесплатную парковку у крыльца.'}
-                      {mapRouteMode === 'emergency' &&
-                        'Экстренный вход: отдельный боковой подъезд без ступенек со стороны двора прямо в приемно-реанимационное отделение (каталка у входа).'}
-                    </span>
-                  </div>
+                <div className="relative z-10 flex flex-wrap items-center justify-between gap-4 pt-4 border-t border-white/15 text-xs text-white/75">
+                  <span>{CLINIC_INFO.address}</span>
+                  <span className="font-semibold text-[#5EEAD4]">
+                    Круглосуточный стационар · Без перерывов и выходных
+                  </span>
                 </div>
               </div>
             </div>
@@ -1601,148 +2385,49 @@ export default function App() {
         </section>
       </main>
 
-      {/* Quiet Commercial Footer */}
-      <footer className="bg-[#0F2922] text-white py-12 border-t border-[#1C453A]">
-        <div className="max-w-7xl mx-auto px-6 lg:px-8">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-8 pb-8 border-b border-white/15">
-            <div className="md:col-span-2">
-              <div className="text-xl font-extrabold tracking-tight text-white mb-2">
-                Лапа Помощи
-              </div>
-              <p className="text-xs text-[#B8E1D8] max-w-md leading-relaxed mb-4">
-                Круглосуточный ветеринарный центр полного цикла в Москве. Доказательная медицина, собственная экспресс-лаборатория, бережная хирургия и стационар 24/7.
-              </p>
-              <div className="text-xs text-[#B8E1D8] tabular-nums">
-                {CLINIC_INFO.licenseNumber}
-              </div>
+      {/* FOOTER */}
+      <footer className="bg-[#0F2922] text-white/80 py-10 border-t border-white/10 text-xs">
+        <div className="max-w-7xl mx-auto px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-[#0D9488] text-white flex items-center justify-center">
+              <PawPrint className="w-4 h-4" />
             </div>
-
             <div>
-              <div className="text-xs font-bold text-white mb-3">Навигация по разделам</div>
-              <ul className="space-y-2 text-xs text-[#B8E1D8]">
-                <li>
-                  <a href="#services" className="hover:text-white transition-snappy">
-                    Услуги и цены
-                  </a>
-                </li>
-                <li>
-                  <a href="#calculator" className="hover:text-white transition-snappy">
-                    Онлайн-калькулятор чек-апа
-                  </a>
-                </li>
-                <li>
-                  <a href="#doctors" className="hover:text-white transition-snappy">
-                    Команда врачей
-                  </a>
-                </li>
-                <li>
-                  <a href="#reviews" className="hover:text-white transition-snappy">
-                    Отзывы владельцев
-                  </a>
-                </li>
-                <li>
-                  <a href="#faq" className="hover:text-white transition-snappy">
-                    Вопросы и подготовка к приему
-                  </a>
-                </li>
-              </ul>
-            </div>
-
-            <div>
-              <div className="text-xs font-bold text-white mb-3">Круглосуточная связь</div>
-              <div className="space-y-2 text-xs text-[#B8E1D8]">
-                <div className="font-bold text-white text-sm tabular-nums">
-                  {CLINIC_INFO.phoneDisplay}
-                </div>
-                <div>{CLINIC_INFO.address}</div>
-                <div>Почта: {CLINIC_INFO.email}</div>
-                <div className="pt-2 flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => openGeneralBooking()}
-                    className="text-xs font-semibold text-[#F97316] hover:underline underline-offset-4 cursor-pointer"
-                  >
-                    Записаться онлайн
-                  </button>
-                  <span aria-hidden="true">·</span>
-                  <button
-                    type="button"
-                    onClick={openSavedAppointments}
-                    className="text-xs font-semibold text-[#B8E1D8] hover:text-white cursor-pointer tabular-nums"
-                  >
-                    Мои заявки ({userVisibleAppointments.length})
-                  </button>
-                </div>
+              <div className="font-bold text-white">
+                Ветеринарная клиника «{CLINIC_INFO.name}»
+              </div>
+              <div className="text-white/60">
+                {CLINIC_INFO.licenseNumber} · {CLINIC_INFO.address}
               </div>
             </div>
           </div>
 
-          <div className="pt-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[#B8E1D8]">
-            <div>
-              © {new Date().getFullYear()} Ветеринарная клиника «Лапа Помощи» (Москва). Все права защищены.
-            </div>
-            <div>Прием ведется круглосуточно 24/7</div>
+          <div className="flex flex-wrap items-center gap-4">
+            <button
+              type="button"
+              onClick={() => setAuthModalOpen(true)}
+              className="text-[#5EEAD4] hover:underline font-semibold cursor-pointer"
+            >
+              {currentUser.authSource !== 'guest'
+                ? `Аккаунт: ${currentUser.displayName}`
+                : 'Вход для клиентов и сотрудников'}
+            </button>
+            <span>© {new Date().getFullYear()} «Лапа Помощи». Все права защищены.</span>
           </div>
         </div>
       </footer>
 
-      {/* Global EmailJS Toast Notification */}
-      {toastNotice && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="fixed bottom-5 right-5 z-50 max-w-md rounded-2xl bg-[#0F2922] text-white border border-[#0D9488] shadow-2xl px-4 py-3.5 flex items-start gap-3"
-        >
-          <div className="w-7 h-7 rounded-lg bg-[#0D9488] flex items-center justify-center shrink-0 mt-0.5">
-            <Check className="w-4 h-4 text-white" />
-          </div>
-          <div className="text-xs leading-relaxed flex-1">
-            <div className="font-bold text-[#2DD4BF] mb-0.5">
-              Почтовый сервис EmailJS
-            </div>
-            <div>{toastNotice}</div>
-          </div>
-          <button
-            type="button"
-            onClick={() => setToastNotice('')}
-            aria-label="Закрыть уведомление"
-            className="text-[#B8E1D8] hover:text-white p-1 cursor-pointer"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
-
-      {/* Interactive Modals */}
-      <AuthModal
-        isOpen={authModalOpen}
-        onClose={() => {
-          setAuthModalOpen(false);
-          setPendingBookingForAuth({ pending: false, prefill: null });
-          setPendingSavedModalForAuth(false);
-        }}
-        currentUser={currentUser}
-        onUserChanged={handleUserChanged}
-        initialMode={authModalMode}
-        authReasonMessage={
-          pendingBookingForAuth.pending
-            ? 'Для оформления записи на прием необходимо войти в аккаунт или зарегистрироваться. После входа форма записи откроется автоматически.'
-            : pendingSavedModalForAuth
-              ? 'Войдите в свой аккаунт или зарегистрируйтесь, чтобы просматривать свои личные записи на прием.'
-              : undefined
-        }
-      />
-
+      {/* MODALS */}
       <BookingModal
         isOpen={bookingModalOpen}
         onClose={() => setBookingModalOpen(false)}
         prefill={bookingPrefill}
         onBookingCreated={handleBookingCreated}
-        servicesList={services}
-        doctorsList={doctors}
+        servicesList={servicesList}
+        doctorsList={doctorsList}
         currentUser={currentUser}
         existingAppointments={appointments}
-        onShowToast={showToastNotice}
+        onShowToast={showToast}
       />
 
       <EmergencyModal
@@ -1750,22 +2435,66 @@ export default function App() {
         onClose={() => setEmergencyModalOpen(false)}
         onRequestEmergencyDispatch={() => {
           setEmergencyModalOpen(false);
-          openGeneralBooking({
+          openBookingWithContext({
             serviceTitle: 'Экстренный выезд бригады на дом (за 30 минут)',
+            doctorName: 'Морозов Дмитрий Игоревич',
+            estimatedPrice: 3500,
             isEmergency: true,
           });
         }}
       />
 
       <SavedAppointmentsModal
-        isOpen={savedModalOpen}
-        onClose={() => setSavedModalOpen(false)}
-        appointments={userVisibleAppointments}
+        isOpen={savedAppointmentsModalOpen}
+        onClose={() => setSavedAppointmentsModalOpen(false)}
+        appointments={appointments}
+        allAppointments={appointments}
+        servicesList={servicesList}
         currentUser={currentUser}
         onCancelAppointment={handleCancelAppointment}
-        onNewAppointment={() => openGeneralBooking()}
-        onShowToast={showToastNotice}
+        onRescheduleAppointment={handleRescheduleAppointment}
+        onDeleteCancelledAppointment={handleDeleteAppointment}
+        onNewAppointment={() => {
+          setSavedAppointmentsModalOpen(false);
+          openBookingWithContext();
+        }}
+        onShowToast={showToast}
       />
+
+      <AuthModal
+        isOpen={authModalOpen}
+        onClose={() => setAuthModalOpen(false)}
+        currentUser={currentUser}
+        onUserChanged={handleUserChanged}
+        authReasonMessage={authReasonMessage}
+      />
+
+      {isUserAdmin && (
+        <AdminDashboard
+          isOpen={adminDashboardOpen}
+          onClose={() => setAdminDashboardOpen(false)}
+          appointments={appointments}
+          services={servicesList}
+          doctors={doctorsList}
+          reviews={reviews}
+          onUpdateAppointmentStatus={handleUpdateAppointmentStatus}
+          onUpdateAppointmentNotes={handleUpdateAppointmentNotes}
+          onUpdateAppointmentRecommendation={handleUpdateAppointmentRecommendation}
+          onUpdateAppointmentPrice={handleUpdateAppointmentPrice}
+          onSyncAllAppointmentPrices={handleSyncAllAppointmentPrices}
+          onDeleteAppointment={handleDeleteAppointment}
+          onCreateManualAppointment={handleCreateManualAdminAppointment}
+          onGenerateRandomAppointments={handleGenerateRandomAppointments}
+          onSaveService={handleSaveService}
+          onDeleteService={handleDeleteService}
+          onSaveDoctor={handleSaveDoctor}
+          onDeleteDoctor={handleDeleteDoctor}
+          onDeleteReview={handleDeleteReview}
+          onResetDemoData={handleResetDemoData}
+        />
+      )}
     </div>
   );
 }
+
+export default App;

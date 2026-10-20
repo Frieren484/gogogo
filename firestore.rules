@@ -1,0 +1,267 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net (Default-Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Global Hardened Primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    // 3. Entity Validation Blueprints
+    function isValidAppointment(data) {
+      return data.keys().hasAll([
+        'id', 'createdAt', 'ownerName', 'phone', 'petSpecies',
+        'petName', 'serviceTitle', 'doctorName', 'preferredDate', 'status'
+      ]) &&
+      data.keys().hasOnly([
+        'id', 'createdAt', 'ownerName', 'phone', 'petSpecies',
+        'petName', 'serviceTitle', 'doctorName', 'preferredDate',
+        'estimatedPrice', 'isEmergency', 'status', 'notes',
+        'ownerUid', 'doctorRecommendation'
+      ]) &&
+      data.id is string && data.id.size() >= 1 && data.id.size() <= 128 &&
+      data.createdAt is string && data.createdAt.size() >= 1 && data.createdAt.size() <= 64 &&
+      data.ownerName is string && data.ownerName.size() >= 1 && data.ownerName.size() <= 120 &&
+      data.phone is string && data.phone.size() >= 3 && data.phone.size() <= 40 &&
+      data.petSpecies is string && data.petSpecies.size() >= 1 && data.petSpecies.size() <= 60 &&
+      data.petName is string && data.petName.size() >= 1 && data.petName.size() <= 80 &&
+      data.serviceTitle is string && data.serviceTitle.size() >= 1 && data.serviceTitle.size() <= 200 &&
+      data.doctorName is string && data.doctorName.size() >= 1 && data.doctorName.size() <= 120 &&
+      data.preferredDate is string && data.preferredDate.size() >= 1 && data.preferredDate.size() <= 64 &&
+      data.status is string && data.status.size() <= 32 &&
+      data.status in ['Новая', 'Подтверждена', 'Завершена', 'Отменена'] &&
+      (!('estimatedPrice' in data) || (data.estimatedPrice is number && data.estimatedPrice >= 0 && data.estimatedPrice <= 1000000)) &&
+      (!('isEmergency' in data) || (data.isEmergency is bool)) &&
+      (!('notes' in data) || (data.notes is string && data.notes.size() <= 2000)) &&
+      (!('ownerUid' in data) || (data.ownerUid is string && data.ownerUid.size() <= 128)) &&
+      (!('doctorRecommendation' in data) || (data.doctorRecommendation is string && data.doctorRecommendation.size() <= 3000));
+    }
+
+    function isValidPetProfile(data) {
+      return data.keys().hasAll([
+        'petName', 'petSpecies', 'breedAndAge', 'weightKg',
+        'chronicNotes', 'lastVaccinationDate', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'petName', 'petSpecies', 'breedAndAge', 'weightKg',
+        'chronicNotes', 'lastVaccinationDate', 'updatedAt'
+      ]) &&
+      data.petName is string && data.petName.size() <= 80 &&
+      data.petSpecies is string && data.petSpecies.size() <= 60 &&
+      data.breedAndAge is string && data.breedAndAge.size() <= 160 &&
+      data.weightKg is string && data.weightKg.size() <= 40 &&
+      data.chronicNotes is string && data.chronicNotes.size() <= 2000 &&
+      data.lastVaccinationDate is string && data.lastVaccinationDate.size() <= 64 &&
+      data.updatedAt is string && data.updatedAt.size() <= 64;
+    }
+
+    function isValidReview(data) {
+      return data.keys().hasAll([
+        'id', 'ownerName', 'ownerRole', 'petName', 'petBreed',
+        'serviceUsed', 'visitDate', 'rating', 'beforeAfterOutcome',
+        'story', 'photoUrl'
+      ]) &&
+      data.keys().hasOnly([
+        'id', 'ownerName', 'ownerRole', 'petName', 'petBreed',
+        'serviceUsed', 'visitDate', 'rating', 'beforeAfterOutcome',
+        'story', 'photoUrl'
+      ]) &&
+      data.id is string && data.id.size() >= 1 && data.id.size() <= 128 &&
+      data.ownerName is string && data.ownerName.size() >= 1 && data.ownerName.size() <= 120 &&
+      data.ownerRole is string && data.ownerRole.size() <= 120 &&
+      data.petName is string && data.petName.size() <= 80 &&
+      data.petBreed is string && data.petBreed.size() <= 120 &&
+      data.serviceUsed is string && data.serviceUsed.size() <= 200 &&
+      data.visitDate is string && data.visitDate.size() <= 64 &&
+      data.rating is number && data.rating >= 1 && data.rating <= 5 &&
+      data.beforeAfterOutcome is string && data.beforeAfterOutcome.size() <= 500 &&
+      data.story is string && data.story.size() >= 1 && data.story.size() <= 3000 &&
+      data.photoUrl is string && data.photoUrl.size() <= 2048;
+    }
+
+    function isValidService(data) {
+      return data.keys().hasAll([
+        'id', 'number', 'category', 'categoryLabel', 'title',
+        'duration', 'priceFrom', 'description', 'included'
+      ]) &&
+      data.keys().hasOnly([
+        'id', 'number', 'category', 'categoryLabel', 'title',
+        'duration', 'priceFrom', 'description', 'included', 'featured'
+      ]) &&
+      data.id is string && data.id.size() >= 1 && data.id.size() <= 128 &&
+      data.number is string && data.number.size() <= 16 &&
+      data.category is string && data.category.size() <= 32 &&
+      data.category in ['diagnostics', 'treatment', 'care'] &&
+      data.categoryLabel is string && data.categoryLabel.size() <= 64 &&
+      data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
+      data.duration is string && data.duration.size() <= 64 &&
+      data.priceFrom is number && data.priceFrom >= 0 && data.priceFrom <= 1000000 &&
+      data.description is string && data.description.size() <= 2000 &&
+      data.included is list && data.included.size() <= 20 &&
+      (data.included.size() == 0 || (data.included[0] is string && data.included[0].size() <= 300)) &&
+      (!('featured' in data) || (data.featured is bool));
+    }
+
+    function isValidDoctor(data) {
+      return data.keys().hasAll([
+        'id', 'name', 'role', 'experienceYears', 'operationsCount',
+        'education', 'quote', 'specialties', 'photoUrl',
+        'fallbackTitle', 'accentColor'
+      ]) &&
+      data.keys().hasOnly([
+        'id', 'name', 'role', 'experienceYears', 'operationsCount',
+        'education', 'quote', 'specialties', 'photoUrl',
+        'fallbackTitle', 'accentColor'
+      ]) &&
+      data.id is string && data.id.size() >= 1 && data.id.size() <= 128 &&
+      data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+      data.role is string && data.role.size() <= 160 &&
+      data.experienceYears is number && data.experienceYears >= 0 && data.experienceYears <= 80 &&
+      data.operationsCount is string && data.operationsCount.size() <= 120 &&
+      data.education is string && data.education.size() <= 500 &&
+      data.quote is string && data.quote.size() <= 1000 &&
+      data.specialties is list && data.specialties.size() <= 20 &&
+      (data.specialties.size() == 0 || (data.specialties[0] is string && data.specialties[0].size() <= 200)) &&
+      data.photoUrl is string && data.photoUrl.size() <= 2048 &&
+      data.fallbackTitle is string && data.fallbackTitle.size() <= 120 &&
+      data.accentColor is string && data.accentColor.size() <= 64;
+    }
+
+    function isValidUserAccount(data) {
+      return data.keys().hasAll([
+        'uid', 'login', 'password', 'displayName',
+        'photoURL', 'role', 'createdAt'
+      ]) &&
+      data.keys().hasOnly([
+        'uid', 'login', 'password', 'displayName',
+        'photoURL', 'role', 'createdAt'
+      ]) &&
+      data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 &&
+      data.login is string && data.login.size() >= 1 && data.login.size() <= 80 &&
+      data.password is string && data.password.size() >= 1 && data.password.size() <= 128 &&
+      data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120 &&
+      data.photoURL is string && data.photoURL.size() <= 4096 &&
+      data.role is string && data.role == 'user' &&
+      data.createdAt is string && data.createdAt.size() <= 64;
+    }
+
+    // 4. Collection Match Blocks
+    match /test/{docId} {
+      allow get: if isValidId(docId);
+    }
+
+    match /appointments/{appointmentId} {
+      allow get: if isValidId(appointmentId);
+      allow list: if request.time != null;
+      allow create: if isValidId(appointmentId) && isValidAppointment(incoming()) && incoming().id == appointmentId;
+      allow update: if isValidId(appointmentId) && isValidAppointment(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt && (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'status', 'preferredDate', 'doctorRecommendation', 'notes',
+            'ownerName', 'phone', 'petSpecies', 'petName',
+            'serviceTitle', 'doctorName', 'estimatedPrice', 'isEmergency',
+            'ownerUid'
+          ])
+        );
+      allow delete: if isValidId(appointmentId);
+    }
+
+    match /pet_profiles/{profileKey} {
+      allow get: if isValidId(profileKey);
+      allow list: if request.time != null;
+      allow create: if isValidId(profileKey) && isValidPetProfile(incoming());
+      allow update: if isValidId(profileKey) && isValidPetProfile(incoming()) && (
+        isAdmin() ||
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'petName', 'petSpecies', 'breedAndAge', 'weightKg',
+          'chronicNotes', 'lastVaccinationDate', 'updatedAt'
+        ])
+      );
+      allow delete: if isValidId(profileKey);
+    }
+
+    match /reviews/{reviewId} {
+      allow get: if isValidId(reviewId);
+      allow list: if request.time != null;
+      allow create: if isValidId(reviewId) && isValidReview(incoming()) && incoming().id == reviewId;
+      allow update: if isValidId(reviewId) && isValidReview(incoming()) &&
+        incoming().id == existing().id && (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'ownerName', 'ownerRole', 'petName', 'petBreed',
+            'serviceUsed', 'visitDate', 'rating', 'beforeAfterOutcome',
+            'story', 'photoUrl'
+          ])
+        );
+      allow delete: if isValidId(reviewId);
+    }
+
+    match /services/{serviceId} {
+      allow get: if isValidId(serviceId);
+      allow list: if request.time != null;
+      allow create: if isValidId(serviceId) && isValidService(incoming()) && incoming().id == serviceId;
+      allow update: if isValidId(serviceId) && isValidService(incoming()) &&
+        incoming().id == existing().id && (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'number', 'category', 'categoryLabel', 'title',
+            'duration', 'priceFrom', 'description', 'included', 'featured'
+          ])
+        );
+      allow delete: if isValidId(serviceId);
+    }
+
+    match /doctors/{doctorId} {
+      allow get: if isValidId(doctorId);
+      allow list: if request.time != null;
+      allow create: if isValidId(doctorId) && isValidDoctor(incoming()) && incoming().id == doctorId;
+      allow update: if isValidId(doctorId) && isValidDoctor(incoming()) &&
+        incoming().id == existing().id && (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'name', 'role', 'experienceYears', 'operationsCount',
+            'education', 'quote', 'specialties', 'photoUrl',
+            'fallbackTitle', 'accentColor'
+          ])
+        );
+      allow delete: if isValidId(doctorId);
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId);
+      allow list: if request.time != null;
+      allow create: if isValidId(userId) && isValidUserAccount(incoming()) && incoming().uid == userId;
+      allow update: if isValidId(userId) && isValidUserAccount(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().role == 'user' && (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'login', 'password', 'displayName', 'photoURL'
+          ])
+        );
+      allow delete: if isValidId(userId);
+    }
+  }
+}

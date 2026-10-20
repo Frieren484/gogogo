@@ -1,13 +1,10 @@
-import { CLINIC_INFO, AppointmentRecord } from '../data/clinicData';
+import { AppointmentRecord } from '../data/clinicData';
 import { googleSignIn, logout as firebaseLogout } from './googleDriveAuth';
 import {
-  EmailNotificationLog,
-  getStoredEmailLogs,
-  sendRealEmailNotification,
-} from './emailService';
-
-export type { EmailNotificationLog };
-export { getStoredEmailLogs, sendRealEmailNotification };
+  sanitizeDocId,
+  savePetProfileToCloud,
+  saveUserAccountToCloud,
+} from './firestoreService';
 
 export type UserRole = 'user' | 'admin';
 
@@ -15,7 +12,6 @@ export interface AppUserProfile {
   uid: string;
   login?: string;
   displayName: string;
-  email: string;
   photoURL: string;
   role: UserRole;
   authSource: 'credentials' | 'google' | 'guest';
@@ -26,14 +22,13 @@ export interface RegisteredAccount {
   login: string;
   password: string;
   displayName: string;
-  email: string;
   photoURL: string;
-  role: 'user'; // Registered accounts are strictly 'user'
+  role: 'user';
   createdAt: string;
 }
 
-const USER_STORAGE_KEY = 'lapa_pomoshchi_active_user_v2';
-const REGISTERED_ACCOUNTS_KEY = 'lapa_pomoshchi_registered_users_v1';
+const USER_STORAGE_KEY = 'lapa_pomoshchi_active_user_v3';
+const REGISTERED_ACCOUNTS_KEY = 'lapa_pomoshchi_registered_users_v2';
 
 function buildAvatarSvgDataUri(initials: string, bgHex: string): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120">
@@ -46,7 +41,6 @@ function buildAvatarSvgDataUri(initials: string, bgHex: string): string {
 export const GUEST_USER_PROFILE: AppUserProfile = {
   uid: 'client-guest-default',
   displayName: 'Гость (Клиент)',
-  email: 'client@lapapomoshchi.ru',
   photoURL: buildAvatarSvgDataUri('КЛ', '#0D9488'),
   role: 'user',
   authSource: 'guest',
@@ -56,7 +50,6 @@ export const SYSTEM_ADMIN_PROFILE: AppUserProfile = {
   uid: 'admin-system-1',
   login: '1',
   displayName: 'Администратор (Логин: 1)',
-  email: CLINIC_INFO.internalSenderEmail, // azazaza2092092@gmail.com
   photoURL: buildAvatarSvgDataUri('АД', '#F97316'),
   role: 'admin',
   authSource: 'credentials',
@@ -68,7 +61,6 @@ const INITIAL_REGISTERED_ACCOUNTS: RegisteredAccount[] = [
     login: 'anna',
     password: '123',
     displayName: 'Анна Соколова (Клиент)',
-    email: 'anna.sokolova.pet@gmail.com',
     photoURL: buildAvatarSvgDataUri('АС', '#0D9488'),
     role: 'user',
     createdAt: '18.10.2026',
@@ -82,8 +74,13 @@ export function getRegisteredAccounts(): RegisteredAccount[] {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
         return parsed.map((acc: RegisteredAccount) => ({
-          ...acc,
-          role: 'user', // Enforce non-admin role for all stored user accounts
+          uid: acc.uid,
+          login: acc.login,
+          password: acc.password,
+          displayName: acc.displayName,
+          photoURL: acc.photoURL,
+          role: 'user',
+          createdAt: acc.createdAt,
         }));
       }
     }
@@ -101,20 +98,43 @@ function saveRegisteredAccounts(accounts: RegisteredAccount[]): void {
   }
 }
 
+export function syncRegisteredAccountsFromCloud(
+  accounts: RegisteredAccount[]
+): void {
+  if (!Array.isArray(accounts) || accounts.length === 0) return;
+  const normalized = accounts.map((acc) => ({
+    uid: acc.uid,
+    login: acc.login,
+    password: acc.password,
+    displayName: acc.displayName,
+    photoURL: acc.photoURL,
+    role: 'user' as const,
+    createdAt: acc.createdAt,
+  }));
+  saveRegisteredAccounts(normalized);
+}
+
 export function getStoredUserProfile(): AppUserProfile {
   try {
     const raw = window.localStorage.getItem(USER_STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as AppUserProfile;
       if (parsed && parsed.uid) {
-        // Strict guard: only system admin with uid 'admin-system-1' and login '1' can hold 'admin' role
         if (parsed.role === 'admin') {
           if (parsed.uid === 'admin-system-1' && parsed.login === '1') {
             return SYSTEM_ADMIN_PROFILE;
           }
-          return { ...parsed, role: 'user' };
+          return GUEST_USER_PROFILE;
         }
-        return { ...parsed, role: 'user' };
+        if (parsed.authSource === 'google') {
+          return {
+            uid: parsed.uid,
+            displayName: parsed.displayName,
+            photoURL: parsed.photoURL,
+            role: 'user',
+            authSource: 'google',
+          };
+        }
       }
     }
   } catch {
@@ -135,8 +155,7 @@ export function saveUserProfile(profile: AppUserProfile): void {
  * Строгая фильтрация записей (RBAC / Безопасность данных):
  * - Администратор (role === 'admin' && login === '1') видит все записи клиники.
  * - Неавторизованный гость (authSource === 'guest') не видит никаких чужих записей ([]).
- * - Обычный клиент (role === 'user') видит ТОЛЬКО свои собственные записи,
- *   отфильтрованные по его uid (ownerUid) или по его email.
+ * - Обычный клиент (role === 'user') видит свои собственные записи по совпадению uid или имени владельца.
  */
 export function filterAppointmentsForUser(
   appointments: AppointmentRecord[],
@@ -150,22 +169,25 @@ export function filterAppointmentsForUser(
     return appointments;
   }
 
-  const normalizedUserEmail = user.email?.trim().toLowerCase() || '';
+  const cleanUserName = user.displayName
+    .replace(/\s*\(.*?\)\s*/g, '')
+    .trim()
+    .toLowerCase();
 
   return appointments.filter((item) => {
     const matchesUid = Boolean(item.ownerUid && item.ownerUid === user.uid);
-    const itemEmail = item.email?.trim().toLowerCase() || '';
-    const matchesEmail = Boolean(
-      normalizedUserEmail && itemEmail && itemEmail === normalizedUserEmail
+    const matchesOwnerName = Boolean(
+      cleanUserName &&
+        item.ownerName &&
+        item.ownerName.trim().toLowerCase() === cleanUserName
     );
-    return matchesUid || matchesEmail;
+    return matchesUid || matchesOwnerName;
   });
 }
 
 /**
- * Login with existing credentials:
- * - Admin login is strictly login === '1' and password === '1'
- * - Any other registered user gets strictly role === 'user'
+ * Вход по логину и паролю разрешен ТОЛЬКО для главного администратора (login === '1', password === '1').
+ * Все остальные пользователи входят исключительно через Google.
  */
 export function authenticateWithCredentials(
   loginInput: string,
@@ -175,10 +197,9 @@ export function authenticateWithCredentials(
   const cleanPassword = passwordInput.trim();
 
   if (!cleanLogin || !cleanPassword) {
-    return { ok: false, error: 'Пожалуйста, введите логин и пароль.' };
+    return { ok: false, error: 'Пожалуйста, введите логин и пароль администратора.' };
   }
 
-  // Check built-in Administrator credentials (login: 1, password: 1)
   if (cleanLogin === '1') {
     if (cleanPassword === '1') {
       saveUserProfile(SYSTEM_ADMIN_PROFILE);
@@ -186,110 +207,15 @@ export function authenticateWithCredentials(
     }
     return {
       ok: false,
-      error: 'Неверный пароль для аккаунта администратора.',
+      error: 'Неверный пароль для главного администратора (Логин: 1).',
     };
   }
 
-  // Check registered client accounts
-  const accounts = getRegisteredAccounts();
-  const matched = accounts.find(
-    (acc) => acc.login.toLowerCase() === cleanLogin.toLowerCase()
-  );
-
-  if (!matched) {
-    return {
-      ok: false,
-      error:
-        'Аккаунт с таким логином не найден. Проверьте логин или зарегистрируйтесь во вкладку «Регистрация».',
-    };
-  }
-
-  if (matched.password !== cleanPassword) {
-    return {
-      ok: false,
-      error: 'Неверный пароль. Проверьте правильность ввода.',
-    };
-  }
-
-  const userProfile: AppUserProfile = {
-    uid: matched.uid,
-    login: matched.login,
-    displayName: matched.displayName,
-    email: matched.email,
-    photoURL: matched.photoURL,
-    role: 'user', // Strictly 'user' — regular users can never access admin
-    authSource: 'credentials',
+  return {
+    ok: false,
+    error:
+      'Вход по логину и паролю доступен только главному администратора (Логин: 1, Пароль: 1). Владельцы питомцев входят через Google.',
   };
-
-  saveUserProfile(userProfile);
-  return { ok: true, user: userProfile };
-}
-
-/**
- * Minimal Registration (Login + Password only):
- * - Prevents registering reserved admin login '1'
- * - Always assigns role: 'user' so registered users cannot enter the admin system
- */
-export function registerUserAccount(
-  loginInput: string,
-  passwordInput: string
-): { ok: true; user: AppUserProfile } | { ok: false; error: string } {
-  const cleanLogin = loginInput.trim();
-  const cleanPassword = passwordInput.trim();
-
-  if (!cleanLogin || !cleanPassword) {
-    return { ok: false, error: 'Заполните поля «Логин» и «Пароль» для регистрации.' };
-  }
-
-  // Block reserved administrator login '1'
-  if (cleanLogin === '1' || cleanLogin.toLowerCase() === 'admin') {
-    return {
-      ok: false,
-      error:
-        'Логин «1» зарезервирован для администратора клиники. Регистрация с правами администратора недоступна — выберите другой логин клиента.',
-    };
-  }
-
-  const accounts = getRegisteredAccounts();
-  const exists = accounts.some(
-    (acc) => acc.login.toLowerCase() === cleanLogin.toLowerCase()
-  );
-
-  if (exists) {
-    return {
-      ok: false,
-      error:
-        'Пользователь с таким логином уже существует. Перейдите во вкладку «Вход», чтобы войти по существующим данным.',
-    };
-  }
-
-  const initials = cleanLogin.slice(0, 2).toUpperCase();
-  const newAccount: RegisteredAccount = {
-    uid: `user-${Date.now()}`,
-    login: cleanLogin,
-    password: cleanPassword,
-    displayName: `${cleanLogin} (Клиент)`,
-    email: `${cleanLogin.toLowerCase().replace(/[^a-z0-9]/g, '') || 'user'}@client.lapa.ru`,
-    photoURL: buildAvatarSvgDataUri(initials || 'КЛ', '#0D9488'),
-    role: 'user',
-    createdAt: new Date().toLocaleDateString('ru-RU'),
-  };
-
-  const updatedAccounts = [newAccount, ...accounts];
-  saveRegisteredAccounts(updatedAccounts);
-
-  const profile: AppUserProfile = {
-    uid: newAccount.uid,
-    login: newAccount.login,
-    displayName: newAccount.displayName,
-    email: newAccount.email,
-    photoURL: newAccount.photoURL,
-    role: 'user',
-    authSource: 'credentials',
-  };
-
-  saveUserProfile(profile);
-  return { ok: true, user: profile };
 }
 
 /**
@@ -300,7 +226,6 @@ export async function signInWithGoogleWithFallback(): Promise<AppUserProfile> {
     const result = await googleSignIn();
     if (result?.user) {
       const displayName = result.user.displayName || 'Клиент Лапа Помощи';
-      const email = result.user.email || 'client.google@gmail.com';
       const initials = displayName
         .split(' ')
         .map((p) => p[0])
@@ -311,10 +236,9 @@ export async function signInWithGoogleWithFallback(): Promise<AppUserProfile> {
       const profile: AppUserProfile = {
         uid: result.user.uid,
         displayName,
-        email,
         photoURL:
           result.user.photoURL || buildAvatarSvgDataUri(initials || 'ЛП', '#0D9488'),
-        role: 'user', // Strictly Client role for Google sign-in
+        role: 'user',
         authSource: 'google',
       };
       saveUserProfile(profile);
@@ -327,7 +251,6 @@ export async function signInWithGoogleWithFallback(): Promise<AppUserProfile> {
   const fallbackProfile: AppUserProfile = {
     uid: 'client-google-fallback',
     displayName: 'Анна Соколова (Google Клиент)',
-    email: 'anna.sokolova.pet@gmail.com',
     photoURL: buildAvatarSvgDataUri('АС', '#0D9488'),
     role: 'user',
     authSource: 'google',
@@ -367,17 +290,18 @@ export function getClientPetProfile(
     const raw = window.localStorage.getItem(PET_PROFILES_STORAGE_KEY);
     if (raw) {
       const map = JSON.parse(raw) as Record<string, ClientPetProfile>;
-      const byUid = map[user.uid];
+      const byUid = map[user.uid] || map[sanitizeDocId(user.uid, 'pet')];
       if (byUid) return byUid;
-      const emailKey = user.email?.trim().toLowerCase();
-      if (emailKey && map[emailKey]) return map[emailKey];
     }
   } catch {
     // ignore storage errors
   }
 
-  // Default pre-populated card for demo account Anna Sokolova
-  if (user.uid === 'user-account-anna' || user.login === 'anna') {
+  if (
+    user.uid === 'user-account-anna' ||
+    user.uid === 'client-google-fallback' ||
+    user.login === 'anna'
+  ) {
     return {
       petName: 'Персик',
       petSpecies: 'Кошка',
@@ -408,13 +332,28 @@ export function saveClientPetProfile(
     const raw = window.localStorage.getItem(PET_PROFILES_STORAGE_KEY);
     const map: Record<string, ClientPetProfile> = raw ? JSON.parse(raw) : {};
     map[user.uid] = normalized;
-    if (user.email) {
-      map[user.email.trim().toLowerCase()] = normalized;
-    }
+    map[sanitizeDocId(user.uid, 'pet')] = normalized;
     window.localStorage.setItem(PET_PROFILES_STORAGE_KEY, JSON.stringify(map));
   } catch {
     // ignore storage errors
   }
+
+  void savePetProfileToCloud(user.uid, normalized).catch(() => {});
+
   return normalized;
 }
 
+export function syncPetProfilesFromCloud(
+  cloudMap: Record<string, ClientPetProfile>
+): void {
+  try {
+    const raw = window.localStorage.getItem(PET_PROFILES_STORAGE_KEY);
+    const current: Record<string, ClientPetProfile> = raw ? JSON.parse(raw) : {};
+    const merged = { ...current, ...cloudMap };
+    window.localStorage.setItem(PET_PROFILES_STORAGE_KEY, JSON.stringify(merged));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export { saveUserAccountToCloud };

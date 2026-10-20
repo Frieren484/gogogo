@@ -6,7 +6,6 @@ import {
   ClipboardCheck,
   Clock,
   Download,
-  Mail,
   PawPrint,
   Phone,
   ShieldCheck,
@@ -16,19 +15,15 @@ import {
 import {
   AppointmentRecord,
   CALCULATOR_PACKAGES,
-  CLINIC_INFO,
   DoctorProfile,
   DOCTORS_DATA,
   PetType,
   PET_TYPES_CONFIG,
+  resolveServicePriceByTitle,
   ServiceItem,
   SERVICES_DATA,
 } from '../data/clinicData';
 import { AppUserProfile, getClientPetProfile } from '../services/authService';
-import {
-  EmailNotificationLog,
-  sendRealEmailNotification,
-} from '../services/emailService';
 import {
   downloadAppointmentVoucher,
   getPreparationAdvice,
@@ -81,7 +76,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
   const [ownerName, setOwnerName] = useState('');
   const [phone, setPhone] = useState('');
-  const [email, setEmail] = useState('');
   const [petSpecies, setPetSpecies] = useState<string>('Кошка');
   const [petName, setPetName] = useState('');
   const [selectedService, setSelectedService] = useState<string>(
@@ -93,9 +87,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const [notes, setNotes] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [submittedRecord, setSubmittedRecord] = useState<AppointmentRecord | null>(null);
-  const [emailNotification, setEmailNotification] = useState<EmailNotificationLog | null>(
-    null
-  );
   const [autoFilledFromPetCard, setAutoFilledFromPetCard] = useState<boolean>(false);
 
   const allServiceOptions = useMemo(() => {
@@ -149,16 +140,39 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     [selectedService, prefill?.isEmergency]
   );
 
+  // Автоматический расчет ориентировочной стоимости по прайс-листу клиники или калькулятору
+  const computedEstimatedPrice = useMemo(() => {
+    if (
+      prefill?.estimatedPrice &&
+      (!prefill.serviceTitle || prefill.serviceTitle === selectedService)
+    ) {
+      return Math.round(Number(prefill.estimatedPrice));
+    }
+    const catalogPrice = resolveServicePriceByTitle(
+      selectedService,
+      petSpecies,
+      servicesList
+    );
+    if (catalogPrice !== null) {
+      return catalogPrice;
+    }
+    return Math.round(Number(prefill?.estimatedPrice) || 1800);
+  }, [
+    prefill?.estimatedPrice,
+    prefill?.serviceTitle,
+    selectedService,
+    petSpecies,
+    servicesList,
+  ]);
+
   useEffect(() => {
     if (isOpen) {
       setErrorMessage('');
       setSubmittedRecord(null);
-      setEmailNotification(null);
       setAutoFilledFromPetCard(false);
 
       if (currentUser && currentUser.authSource !== 'guest') {
         setOwnerName(currentUser.displayName.replace(/\s*\(.*?\)\s*/g, '').trim());
-        setEmail(currentUser.email);
 
         // Автоподстановка данных из сохраненной электронной медкарты питомца
         const savedPetCard = getClientPetProfile(currentUser);
@@ -181,7 +195,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         }
       } else {
         setOwnerName((prev) => (prev === 'Гость' ? '' : prev));
-        setEmail((prev) => (prev === 'client@lapapomoshchi.ru' ? '' : prev));
       }
 
       if (prefill?.petType) {
@@ -207,19 +220,20 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     if (errorMessage) setErrorMessage('');
   };
 
+  // Прямое оформление записи без кодов и без поля почты
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMessage('');
 
     if (!currentUser || currentUser.authSource === 'guest') {
       setErrorMessage(
-        'Для записи на прием необходимо войти в систему или зарегистрироваться.'
+        'Для записи на прием необходимо войти через Google (или под аккаунтом администратора).'
       );
       return;
     }
 
     const trimmedOwner = ownerName.trim();
     const trimmedPet = petName.trim();
-    const trimmedEmail = email.trim();
     const digitsOnly = phone.replace(/\D/g, '');
 
     if (trimmedOwner.length < 2) {
@@ -229,11 +243,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
     if (digitsOnly.length < 10) {
       setErrorMessage('Пожалуйста, введите корректный номер телефона (10–11 цифр).');
-      return;
-    }
-
-    if (!trimmedEmail || !trimmedEmail.includes('@')) {
-      setErrorMessage('Пожалуйста, укажите корректный Email для получения уведомления о записи.');
       return;
     }
 
@@ -263,36 +272,34 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       }),
       ownerName: trimmedOwner,
       phone: phone.trim(),
-      email: trimmedEmail,
       petSpecies,
       petName: trimmedPet,
       serviceTitle: selectedService,
       doctorName: selectedDoctor,
       preferredDate: `${preferredDate} в ${preferredTime}`,
-      estimatedPrice: prefill?.estimatedPrice,
+      estimatedPrice: computedEstimatedPrice,
       isEmergency: prefill?.isEmergency || false,
       status: 'Новая',
-      notes: notes.trim() || (prefill?.isEmergency ? 'Экстренный вызов через сайт' : 'Запись онлайн'),
+      notes:
+        notes.trim() ||
+        (prefill?.isEmergency ? 'Экстренный вызов через сайт' : 'Запись онлайн через сайт'),
       ownerUid: currentUser?.uid,
-      senderAliasEmail: CLINIC_INFO.publicAliasEmail, // LapaPomochu@gmail.com
     };
 
     onBookingCreated(newRecord);
     setSubmittedRecord(newRecord);
 
-    void sendRealEmailNotification(newRecord, 'created').then((result) => {
-      setEmailNotification(result.log);
-      if (onShowToast) {
-        onShowToast(result.toastMessage);
-      }
-    });
+    if (onShowToast) {
+      onShowToast(
+        `Заявка #${newRecord.id} для питомца «${newRecord.petName}» успешно оформлена на ${newRecord.preferredDate}!`
+      );
+    }
   };
 
   const resetAndClose = () => {
     setPetName('');
     setNotes('');
     setSubmittedRecord(null);
-    setEmailNotification(null);
     onClose();
   };
 
@@ -335,43 +342,23 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               <CheckCircle2 className="w-9 h-9" />
             </div>
             <h4 className="text-xl sm:text-2xl font-bold text-[#0F2922] mb-2">
-              Спасибо! Администратор свяжется с вами в течение 5 минут
+              Ваш талон на приём успешно оформлен!
             </h4>
             <p className="text-xs sm:text-sm text-[#335249] max-w-md mx-auto mb-5">
-              Ваша заявка{' '}
+              Заявка{' '}
               <span className="font-semibold text-[#0F2922] tabular-nums">
                 #{submittedRecord.id}
               </span>{' '}
-              зарегистрирована и сохранена в разделе «Мои заявки».
+              сохранена в расписании клиники и доступна в разделе «Мои заявки».
             </p>
 
-            {/* Masked Email Notification Preview Card */}
-            {emailNotification && (
-              <div className="rounded-xl bg-[#E6F4F1] border border-[#0D9488] p-4 text-left mb-4 space-y-1.5">
-                <div className="flex items-center justify-between gap-2 text-xs font-bold text-[#0F2922]">
-                  <div className="flex items-center gap-2">
-                    <Mail className="w-4 h-4 text-[#0D9488] shrink-0" />
-                    <span>Отправлено Email-уведомление с талоном</span>
-                  </div>
-                  <span className="text-[11px] font-semibold text-[#0D9488]">Доставлено</span>
-                </div>
-                <div className="text-xs text-[#335249]">
-                  Отправитель для клиента:{' '}
-                  <strong className="text-[#0F2922]">
-                    Клиника «Лапа Помощи» &lt;{emailNotification.displaySenderEmail}&gt;
-                  </strong>
-                </div>
-                <div className="text-xs text-[#335249]">
-                  Получатель:{' '}
-                  <strong className="text-[#0F2922]">{emailNotification.recipientEmail}</strong>
-                </div>
-                <div className="text-[11px] text-[#335249] pt-1 border-t border-[#D1EAE4]">
-                  Тема: {emailNotification.subject}
-                </div>
-              </div>
-            )}
-
             <div className="rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] p-4 text-left space-y-2 mb-4 text-sm">
+              <div className="flex justify-between gap-4">
+                <span className="text-[#335249]">Владелец и телефон:</span>
+                <span className="font-semibold text-[#0F2922] text-right tabular-nums">
+                  {submittedRecord.ownerName} ({submittedRecord.phone})
+                </span>
+              </div>
               <div className="flex justify-between gap-4">
                 <span className="text-[#335249]">Пациент:</span>
                 <span className="font-semibold text-[#0F2922]">
@@ -396,14 +383,12 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   {submittedRecord.preferredDate}
                 </span>
               </div>
-              {submittedRecord.estimatedPrice && (
-                <div className="flex justify-between gap-4 pt-2 border-t border-[#D1EAE4]">
-                  <span className="text-[#335249]">Расчетная стоимость:</span>
-                  <span className="font-bold text-[#0D9488] tabular-nums">
-                    {submittedRecord.estimatedPrice.toLocaleString('ru-RU')} ₽
-                  </span>
-                </div>
-              )}
+              <div className="flex justify-between gap-4 pt-2 border-t border-[#D1EAE4]">
+                <span className="text-[#335249]">Расчетная стоимость:</span>
+                <span className="font-bold text-[#0D9488] tabular-nums">
+                  {submittedRecord.estimatedPrice.toLocaleString('ru-RU')} ₽
+                </span>
+              </div>
             </div>
 
             {/* Памятка подготовки к приему */}
@@ -448,14 +433,18 @@ export const BookingModal: React.FC<BookingModalProps> = ({
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="p-6 space-y-4">
-            {prefill?.estimatedPrice && (
+            {computedEstimatedPrice > 0 && (
               <div className="rounded-xl bg-[#E6F4F1] border border-[#D1EAE4] px-4 py-3 flex items-center justify-between gap-4">
                 <div className="text-xs text-[#0F2922]">
-                  <span className="font-semibold">Перенесено из калькулятора:</span>{' '}
-                  {prefill.serviceTitle}
+                  <span className="font-semibold">
+                    {prefill?.estimatedPrice && prefill?.serviceTitle === selectedService
+                      ? 'Перенесено из калькулятора:'
+                      : 'Ориентировочная стоимость по прайсу:'}
+                  </span>{' '}
+                  {selectedService}
                 </div>
                 <span className="text-sm font-bold text-[#0D9488] tabular-nums shrink-0">
-                  ~ {prefill.estimatedPrice.toLocaleString('ru-RU')} ₽
+                  ~ {computedEstimatedPrice.toLocaleString('ru-RU')} ₽
                 </span>
               </div>
             )}
@@ -512,27 +501,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   />
                 </div>
               </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-[#0F2922] mb-1.5">
-                Ваш Email для получения талона и уведомления *
-              </label>
-              <div className="relative">
-                <Mail className="w-4 h-4 text-[#335249] absolute left-3.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="example@gmail.com"
-                  className="w-full pl-10 pr-3.5 py-2.5 text-sm rounded-xl border border-[#D1EAE4] bg-white text-[#0F2922] focus:outline-none focus:border-[#0D9488]"
-                  required
-                />
-              </div>
-              <p className="text-[11px] text-[#335249] mt-1">
-                Уведомление придет от официального адреса клиники{' '}
-                <strong className="text-[#0F2922]">{CLINIC_INFO.publicAliasEmail}</strong>
-              </p>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -693,11 +661,11 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 type="submit"
                 className="w-full py-3.5 px-6 rounded-xl bg-[#F97316] hover:bg-[#EA580C] text-white font-semibold text-sm shadow-md transition-snappy whitespace-nowrap cursor-pointer"
               >
-                Подтвердить запись и получить талон на Email
+                Подтвердить запись на прием
               </button>
               <div className="flex items-center justify-center gap-2 mt-3 text-xs text-[#335249]">
                 <ShieldCheck className="w-4 h-4 text-[#0D9488] shrink-0" />
-                <span>Без предоплаты · Перезвоним за 5 минут для подтверждения</span>
+                <span>Мгновенное оформление без лишних кодов · Именной талон формируется сразу</span>
               </div>
             </div>
           </form>
