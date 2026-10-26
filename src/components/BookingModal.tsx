@@ -171,8 +171,13 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       setSubmittedRecord(null);
       setAutoFilledFromPetCard(false);
 
-      if (currentUser && currentUser.authSource !== 'guest') {
+      if (
+        currentUser &&
+        currentUser.authSource !== 'guest' &&
+        currentUser.role === 'user'
+      ) {
         setOwnerName(currentUser.displayName.replace(/\s*\(.*?\)\s*/g, '').trim());
+        setPhone(currentUser.phone || '');
 
         // Автоподстановка данных из сохраненной электронной медкарты питомца
         const savedPetCard = getClientPetProfile(currentUser);
@@ -182,19 +187,33 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             setPetSpecies(savedPetCard.petSpecies);
           }
           const cardNotes = [
-            savedPetCard.breedAndAge,
-            savedPetCard.weightKg ? `вес ${savedPetCard.weightKg} кг` : '',
-            savedPetCard.chronicNotes,
+            savedPetCard.breedAndAge && savedPetCard.breedAndAge !== '—'
+              ? savedPetCard.breedAndAge
+              : '',
+            savedPetCard.weightKg && savedPetCard.weightKg !== '—'
+              ? `вес ${savedPetCard.weightKg} кг`
+              : '',
+            savedPetCard.chronicNotes && savedPetCard.chronicNotes !== '—'
+              ? savedPetCard.chronicNotes
+              : '',
           ]
             .filter(Boolean)
             .join(', ');
-          if (cardNotes) {
-            setNotes(cardNotes);
-          }
+          setNotes(cardNotes);
           setAutoFilledFromPetCard(true);
+        } else {
+          setPetName(currentUser.petName || '');
+          if (!prefill?.petType && currentUser.petSpecies) {
+            setPetSpecies(currentUser.petSpecies);
+          }
+          setNotes('');
         }
       } else {
-        setOwnerName((prev) => (prev === 'Гость' ? '' : prev));
+        // Для врача, администратора или гостя оставляем поля чистыми для ввода данных клиента
+        setOwnerName('');
+        setPhone('');
+        setPetName('');
+        setNotes('');
       }
 
       if (prefill?.petType) {
@@ -227,7 +246,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
     if (!currentUser || currentUser.authSource === 'guest') {
       setErrorMessage(
-        'Для записи на прием необходимо войти через Google (или под аккаунтом администратора).'
+        'Для оформления онлайн-записи войдите в личный кабинет или зарегистрируйтесь.'
       );
       return;
     }
@@ -283,7 +302,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       notes:
         notes.trim() ||
         (prefill?.isEmergency ? 'Экстренный вызов через сайт' : 'Запись онлайн через сайт'),
-      ownerUid: currentUser?.uid,
+      ownerUid: currentUser.role === 'user' ? currentUser.uid : undefined,
     };
 
     onBookingCreated(newRecord);
@@ -617,6 +636,23 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 </div>
               </div>
             </div>
+
+            {petSpecies === 'Грызун' &&
+              !selectedDoctor.toLowerCase().includes('соколов') && (
+                <div className="rounded-xl bg-[#E6F4F1] border border-[#0D9488]/40 px-3.5 py-2 flex items-center justify-between gap-2 text-xs text-[#0F2922]">
+                  <span>
+                    Для кроликов и грызунов рекомендуем профильного ратолога —{' '}
+                    <strong>Соколову Анну Павловну</strong>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDoctor('Соколова Анна Павловна')}
+                    className="px-2.5 py-1 rounded-lg bg-[#0D9488] text-white font-bold text-[11px] hover:bg-[#0F766E] transition-snappy shrink-0 cursor-pointer"
+                  >
+                    Выбрать ратолога
+                  </button>
+                </div>
+              )}
 
             {occupiedSlotsForDoctorAndDate.size > 0 && (
               <div className="rounded-xl bg-amber-50 border border-amber-200 px-3.5 py-2 flex items-center gap-2 text-xs text-amber-900">

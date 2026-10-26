@@ -60,6 +60,8 @@ interface SavedAppointmentsModalProps {
   onDeleteCancelledAppointment?: (id: string) => void;
   onOpenReviewForAppointment?: (record: AppointmentRecord) => void;
   onNewAppointment: () => void;
+  onOpenAuthModal?: () => void;
+  onUserUpdated?: (user: AppUserProfile) => void;
   onShowToast?: (message: string) => void;
 }
 
@@ -75,6 +77,8 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
   onDeleteCancelledAppointment,
   onOpenReviewForAppointment,
   onNewAppointment,
+  onOpenAuthModal,
+  onUserUpdated,
   onShowToast,
 }) => {
   const todayDate = new Date().toISOString().split('T')[0];
@@ -138,9 +142,17 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
   if (!isOpen) return null;
 
   const isAdmin = currentUser.role === 'admin' && currentUser.login === '1';
+  const isGuest = currentUser.authSource === 'guest';
 
   const handleSavePetCard = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isGuest) {
+      if (onOpenAuthModal) {
+        onClose();
+        onOpenAuthModal();
+      }
+      return;
+    }
     if (!petName.trim()) {
       setSavedBanner('Пожалуйста, укажите кличку вашего питомца.');
       return;
@@ -155,6 +167,13 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
       updatedAt: new Date().toLocaleDateString('ru-RU'),
     });
     setProfileUpdatedAt(updated.updatedAt);
+    if (onUserUpdated && currentUser.role === 'user') {
+      onUserUpdated({
+        ...currentUser,
+        petName: updated.petName,
+        petSpecies: updated.petSpecies,
+      });
+    }
     const msg = `Электронная медкарта питомца «${updated.petName}» сохранена! Данные будут автоматически подставляться при новой записи.`;
     setSavedBanner(msg);
     if (onShowToast) {
@@ -294,12 +313,50 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
             <div className="mb-4 rounded-xl bg-[#E6F4F1]/70 border border-[#D1EAE4] px-3.5 py-2.5 flex items-center gap-2 text-xs text-[#0F2922]">
               <ShieldCheck className="w-4 h-4 text-[#0D9488] shrink-0" />
               <span>
-                Защита данных: отображаются только ваши личные заявки, талоны и медкарта питомца, привязанные к вашему профилю.
+                {isGuest
+                  ? 'Вы находитесь в гостевом режиме. Войдите или зарегистрируйтесь, чтобы сохранять электронную медкарту питомца и историю приемов.'
+                  : 'Защита данных: отображаются только ваши личные заявки, талоны и медкарта питомца, привязанные к вашему профилю.'}
               </span>
             </div>
           )}
 
-          {activeTab === 'pet_profile' ? (
+          {isGuest ? (
+            <div className="text-center py-8 px-4 rounded-xl bg-[#F4FAF8] border border-[#D1EAE4]">
+              <PawPrint className="w-9 h-9 text-[#0D9488] mx-auto mb-3" />
+              <h4 className="text-base font-bold text-[#0F2922] mb-1.5">
+                Войдите в кабинет владельца питомца
+              </h4>
+              <p className="text-xs text-[#335249] max-w-md mx-auto mb-5 leading-relaxed">
+                После входа или быстрой регистрации за 15 секунд здесь будут доступны ваши талоны на прием, заключения врачей и электронный паспорт питомца с автозаполнением.
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                {onOpenAuthModal && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onOpenAuthModal();
+                    }}
+                    className="py-2.5 px-5 rounded-xl bg-[#0D9488] hover:bg-[#0F766E] text-white text-xs font-bold transition-snappy inline-flex items-center gap-2 cursor-pointer shadow-xs"
+                  >
+                    <ShieldCheck className="w-4 h-4" />
+                    <span>Войти или зарегистрироваться</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onNewAppointment();
+                  }}
+                  className="py-2.5 px-5 rounded-xl bg-[#F97316] hover:bg-[#EA580C] text-white text-xs font-semibold transition-snappy inline-flex items-center gap-2 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Записаться на прием</span>
+                </button>
+              </div>
+            </div>
+          ) : activeTab === 'pet_profile' ? (
             <form onSubmit={handleSavePetCard} className="space-y-4">
               <div className="rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] p-4 flex items-start justify-between gap-3">
                 <div className="flex items-start gap-3">

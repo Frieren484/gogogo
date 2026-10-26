@@ -55,10 +55,12 @@ import { BookingModal, BookingPrefill } from './components/BookingModal';
 import { EmergencyModal } from './components/EmergencyModal';
 import { SavedAppointmentsModal } from './components/SavedAppointmentsModal';
 import { AdminDashboard } from './components/AdminDashboard';
+import { DoctorDashboard } from './components/DoctorDashboard';
 import { AuthModal } from './components/AuthModal';
 import {
   AppUserProfile,
   filterAppointmentsForUser,
+  getClientPetProfile,
   getRegisteredAccounts,
   getStoredUserProfile,
   saveUserProfile,
@@ -140,6 +142,9 @@ export function App() {
   // Admin CRM Modal State
   const [adminDashboardOpen, setAdminDashboardOpen] = useState(false);
 
+  // Doctor Personal Cabinet State
+  const [doctorDashboardOpen, setDoctorDashboardOpen] = useState(false);
+
   // Toast message
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -202,6 +207,7 @@ export function App() {
   const [bookingPrefill, setBookingPrefill] = useState<BookingPrefill | null>(
     null
   );
+  const [pendingBookingAfterAuth, setPendingBookingAfterAuth] = useState(false);
   const [emergencyModalOpen, setEmergencyModalOpen] = useState(false);
   const [savedAppointmentsModalOpen, setSavedAppointmentsModalOpen] =
     useState(false);
@@ -392,29 +398,63 @@ export function App() {
   const handleUserChanged = (user: AppUserProfile) => {
     setCurrentUser(user);
     saveUserProfile(user);
+
+    // Закрываем открытые ролевые панели предыдущей сессии при смене пользователя или выходе
+    setAdminDashboardOpen(false);
+    setDoctorDashboardOpen(false);
+    setSavedAppointmentsModalOpen(false);
+
+    if (user.authSource === 'guest') {
+      setPendingBookingAfterAuth(false);
+      return;
+    }
+
+    // Если гость нажимал «Записаться» (с услугой, врачом или сметой), сразу открываем форму записи с сохраненным выбором
+    if (pendingBookingAfterAuth) {
+      setPendingBookingAfterAuth(false);
+      setBookingModalOpen(true);
+      return;
+    }
+
     if (user.role === 'admin' && user.login === '1') {
       setAdminDashboardOpen(true);
+    } else if (user.role === 'doctor') {
+      setDoctorDashboardOpen(true);
+    } else if (user.role === 'user') {
+      setSavedAppointmentsModalOpen(true);
     }
   };
 
   // Open booking modal with context
   const openBookingWithContext = (options?: BookingPrefill) => {
+    setBookingPrefill(options || null);
     if (currentUser.authSource === 'guest') {
+      setPendingBookingAfterAuth(true);
+      const selectedContextLabel =
+        options?.serviceTitle || options?.doctorName || '';
       setAuthReasonMessage(
-        'Для оформления онлайн-записи на прием войдите через аккаунт Google.'
+        selectedContextLabel
+          ? `Вы выбрали: «${selectedContextLabel}». Войдите или зарегистрируйтесь — окно записи откроется сразу с вашим выбором.`
+          : 'Для оформления онлайн-записи на прием войдите в личный кабинет или зарегистрируйтесь.'
       );
       setAuthModalOpen(true);
       return;
     }
-    setBookingPrefill(options || null);
+    setPendingBookingAfterAuth(false);
     setBookingModalOpen(true);
   };
 
   const handleBookingCreated = (newRecord: AppointmentRecord) => {
+    const resolvedOwnerUid =
+      newRecord.ownerUid ||
+      (currentUser.authSource !== 'guest' && currentUser.role === 'user'
+        ? currentUser.uid
+        : undefined);
+
     const normalized: AppointmentRecord = {
       ...newRecord,
       estimatedPrice: resolveAppointmentPrice(newRecord, servicesList),
-      ownerUid: newRecord.ownerUid || currentUser.uid,
+      ownerUid: resolvedOwnerUid,
     };
 
     setAppointments((prev) => {
@@ -474,16 +514,15 @@ export function App() {
 
   const handleQuickCallbackSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (currentUser.authSource === 'guest') {
-      setAuthReasonMessage(
-        'Для быстрой записи войдите через Google (или используйте вход сотрудника).'
-      );
-      setAuthModalOpen(true);
+
+    const digits = quickPhone.replace(/\D/g, '');
+    if (digits.length < 10) {
+      showToast('Пожалуйста, укажите корректный номер телефона (10–11 цифр).');
       return;
     }
 
-    const digits = quickPhone.replace(/\D/g, '');
-    if (digits.length < 6) return;
+    const isClientLoggedIn =
+      currentUser.authSource !== 'guest' && currentUser.role === 'user';
 
     const defaultServiceTitle =
       servicesList[0]?.title || 'Терапия и первичный клинический прием';
@@ -493,12 +532,18 @@ export function App() {
         hour: '2-digit',
         minute: '2-digit',
       }),
-      ownerName: currentUser.displayName,
+      ownerName: isClientLoggedIn
+        ? currentUser.displayName
+        : 'Экспресс-обращение с сайта',
       phone: quickPhone.trim(),
       petSpecies: quickPetType,
-      petName: 'Уточняется по телефону',
+      petName:
+        (isClientLoggedIn && currentUser.petName) || 'Уточняется по телефону',
       serviceTitle: defaultServiceTitle,
-      doctorName: 'Дежурный специалист клиники',
+      doctorName:
+        quickPetType === 'Грызун'
+          ? 'Соколова Анна Павловна'
+          : 'Дежурный специалист клиники',
       preferredDate: 'Сегодня, ближайшее окно',
       estimatedPrice: resolveServicePriceByTitle(
         defaultServiceTitle,
@@ -507,15 +552,15 @@ export function App() {
       ),
       isEmergency: false,
       status: 'Новая',
-      notes: 'Быстрая запись в 1 клик с первого экрана',
-      ownerUid: currentUser.uid,
+      notes: 'Быстрая запись в 1 клик с первого экрана (перезвонить за 10 минут)',
+      ownerUid: isClientLoggedIn ? currentUser.uid : undefined,
     };
 
     handleBookingCreated(created);
     setQuickPhone('');
-    setQuickSentBanner(
-      `Заявка №${created.id} принята! Дежурный регистратор свяжется с вами по номеру ${created.phone} в течение 10 минут.`
-    );
+    const confirmMsg = `Заявка №${created.id} принята! Дежурный регистратор свяжется с вами по номеру ${created.phone} в течение 10 минут.`;
+    setQuickSentBanner(confirmMsg);
+    showToast(confirmMsg);
   };
 
   const handleCancelAppointment = (id: string) => {
@@ -597,6 +642,22 @@ export function App() {
               ...item,
               preferredDate: newDate,
               status: item.status === 'Отменена' ? 'Новая' : item.status,
+              estimatedPrice: resolveAppointmentPrice(item, servicesList),
+            }
+          : item
+      );
+      void syncAppointmentsToCloud(next, prev, servicesList);
+      return next;
+    });
+  };
+
+  const handleUpdateAppointmentDoctor = (id: string, doctorName: string) => {
+    setAppointments((prev) => {
+      const next = prev.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              doctorName,
               estimatedPrice: resolveAppointmentPrice(item, servicesList),
             }
           : item
@@ -739,11 +800,42 @@ export function App() {
     });
   };
 
+  const openReviewFormWithPrefill = (record?: AppointmentRecord) => {
+    if (currentUser.authSource === 'guest') {
+      setAuthReasonMessage(
+        'Для публикации отзыва войдите в личный кабинет или зарегистрируйтесь.'
+      );
+      setAuthModalOpen(true);
+      return;
+    }
+    const petCard = getClientPetProfile(currentUser);
+    setNewReviewOwner(
+      record?.ownerName ||
+        currentUser.displayName.replace(/\s*\(.*?\)\s*/g, '').trim()
+    );
+    setNewReviewPetName(
+      record?.petName || petCard?.petName || currentUser.petName || ''
+    );
+    setNewReviewPetBreed(
+      petCard?.breedAndAge ||
+        record?.petSpecies ||
+        currentUser.petSpecies ||
+        ''
+    );
+    if (record?.serviceTitle) {
+      setNewReviewService(record.serviceTitle);
+    }
+    setReviewFormOpen(true);
+    setTimeout(() => {
+      document.getElementById('reviews')?.scrollIntoView({ behavior: 'smooth' });
+    }, 100);
+  };
+
   const handleAddReviewSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (currentUser.authSource === 'guest') {
       setAuthReasonMessage(
-        'Чтобы оставить отзыв о визите, пожалуйста, войдите через Google.'
+        'Чтобы оставить отзыв о визите, пожалуйста, войдите в личный кабинет или зарегистрируйтесь.'
       );
       setAuthModalOpen(true);
       return;
@@ -757,12 +849,29 @@ export function App() {
       return;
     }
 
+    const breedLower = `${newReviewPetBreed} ${currentUser.petSpecies || ''}`.toLowerCase();
+    const reviewPhoto =
+      breedLower.includes('собак') ||
+      breedLower.includes('корги') ||
+      breedLower.includes('терьер') ||
+      breedLower.includes('шпиц')
+        ? 'https://images.unsplash.com/photo-1548199973-03cce0bbc87b?auto=format&fit=crop&w=600&q=80'
+        : breedLower.includes('грызун') ||
+          breedLower.includes('кролик') ||
+          breedLower.includes('шиншилл') ||
+          breedLower.includes('свинк')
+        ? 'https://images.unsplash.com/photo-1585110396000-c9ffd4e4b308?auto=format&fit=crop&w=600&q=80'
+        : 'https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?auto=format&fit=crop&w=600&q=80';
+
     const createdReview: TestimonialItem = {
       id: `rev-${Date.now()}`,
       ownerName: newReviewOwner.trim(),
       ownerRole: `Владелец питомца ${newReviewPetName.trim()}`,
       petName: newReviewPetName.trim(),
-      petBreed: newReviewPetBreed.trim() || 'Домашний питомец',
+      petBreed:
+        newReviewPetBreed.trim() ||
+        currentUser.petSpecies ||
+        'Домашний питомец',
       serviceUsed: newReviewService,
       visitDate: new Date().toLocaleDateString('ru-RU', {
         month: 'long',
@@ -773,8 +882,7 @@ export function App() {
         newReviewOutcome.trim() ||
         'Успешный прием, бережная диагностика и понятный план лечения.',
       story: newReviewStory.trim(),
-      photoUrl:
-        'https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?auto=format&fit=crop&w=600&q=80',
+      photoUrl: reviewPhoto,
     };
 
     setReviews((prev) => {
@@ -827,6 +935,14 @@ export function App() {
 
   const isUserAdmin =
     currentUser.role === 'admin' && currentUser.login === '1';
+  const isUserDoctor = currentUser.role === 'doctor';
+
+  const doctorAppointmentsCount = useMemo(() => {
+    if (!isUserDoctor) return 0;
+    return filterAppointmentsForUser(appointments, currentUser).filter(
+      (a) => a.status !== 'Отменена'
+    ).length;
+  }, [appointments, currentUser, isUserDoctor]);
 
   return (
     <div className="min-h-screen flex flex-col bg-[#F4FAF8] text-[#0F2922] selection:bg-[#0D9488] selection:text-white">
@@ -853,6 +969,17 @@ export function App() {
               >
                 <ShieldCheck className="w-3.5 h-3.5" />
                 <span>Админ-панель ({appointments.length})</span>
+              </button>
+            )}
+
+            {isUserDoctor && (
+              <button
+                type="button"
+                onClick={() => setDoctorDashboardOpen(true)}
+                className="inline-flex items-center gap-1.5 text-amber-300 hover:text-white font-bold transition-snappy cursor-pointer bg-amber-500/20 border border-amber-400/30 px-2.5 py-1 rounded-md"
+              >
+                <Stethoscope className="w-3.5 h-3.5 text-amber-400" />
+                <span>Кабинет врача ({doctorAppointmentsCount})</span>
               </button>
             )}
 
@@ -956,6 +1083,7 @@ export function App() {
             <button
               type="button"
               onClick={() => {
+                setPendingBookingAfterAuth(false);
                 setAuthReasonMessage(undefined);
                 setAuthModalOpen(true);
               }}
@@ -982,10 +1110,12 @@ export function App() {
                     className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold uppercase ${
                       isUserAdmin
                         ? 'bg-[#0D9488] text-white'
+                        : isUserDoctor
+                        ? 'bg-amber-100 text-amber-800'
                         : 'bg-[#0D9488]/15 text-[#0D9488]'
                     }`}
                   >
-                    {isUserAdmin ? 'Админ' : 'Клиент'}
+                    {isUserAdmin ? 'Админ' : isUserDoctor ? 'Врач' : 'Клиент'}
                   </span>
                 </>
               ) : (
@@ -1007,17 +1137,30 @@ export function App() {
               </button>
             )}
 
-            <button
-              type="button"
-              onClick={() => setSavedAppointmentsModalOpen(true)}
-              className="py-2.5 px-3.5 rounded-xl bg-white border border-[#D1EAE4] hover:border-[#0D9488] text-xs font-bold text-[#0F2922] inline-flex items-center gap-2 transition-snappy whitespace-nowrap cursor-pointer"
-            >
-              <Calendar className="w-4 h-4 text-[#0D9488]" />
-              <span>Кабинет</span>
-              <span className="px-1.5 py-0.5 rounded-md bg-[#E6F4F1] text-[#0D9488] font-extrabold tabular-nums">
-                {activeAppointmentsCount}
-              </span>
-            </button>
+            {isUserDoctor && (
+              <button
+                type="button"
+                onClick={() => setDoctorDashboardOpen(true)}
+                className="py-2.5 px-3.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold inline-flex items-center gap-1.5 transition-snappy whitespace-nowrap cursor-pointer shadow-xs"
+              >
+                <Stethoscope className="w-4 h-4" />
+                <span>Кабинет врача ({doctorAppointmentsCount})</span>
+              </button>
+            )}
+
+            {!isUserDoctor && (
+              <button
+                type="button"
+                onClick={() => setSavedAppointmentsModalOpen(true)}
+                className="py-2.5 px-3.5 rounded-xl bg-white border border-[#D1EAE4] hover:border-[#0D9488] text-xs font-bold text-[#0F2922] inline-flex items-center gap-2 transition-snappy whitespace-nowrap cursor-pointer"
+              >
+                <Calendar className="w-4 h-4 text-[#0D9488]" />
+                <span>Кабинет</span>
+                <span className="px-1.5 py-0.5 rounded-md bg-[#E6F4F1] text-[#0D9488] font-extrabold tabular-nums">
+                  {activeAppointmentsCount}
+                </span>
+              </button>
+            )}
 
             <button
               type="button"
@@ -1040,12 +1183,27 @@ export function App() {
             </button>
             <button
               type="button"
-              onClick={() => setSavedAppointmentsModalOpen(true)}
+              onClick={() => {
+                if (isUserDoctor) {
+                  setDoctorDashboardOpen(true);
+                } else {
+                  setSavedAppointmentsModalOpen(true);
+                }
+              }}
               className="p-2.5 rounded-xl bg-white border border-[#D1EAE4] text-[#0F2922] inline-flex items-center gap-1.5 text-xs font-bold"
-              aria-label="Мои записи"
+              aria-label={isUserDoctor ? 'Кабинет врача' : 'Мои записи'}
             >
-              <Calendar className="w-4 h-4 text-[#0D9488]" />
-              <span className="tabular-nums">{activeAppointmentsCount}</span>
+              {isUserDoctor ? (
+                <>
+                  <Stethoscope className="w-4 h-4 text-amber-600" />
+                  <span className="tabular-nums">{doctorAppointmentsCount}</span>
+                </>
+              ) : (
+                <>
+                  <Calendar className="w-4 h-4 text-[#0D9488]" />
+                  <span className="tabular-nums">{activeAppointmentsCount}</span>
+                </>
+              )}
             </button>
             <button
               type="button"
@@ -1117,6 +1275,19 @@ export function App() {
                   <span>Открыть Админ-панель</span>
                 </button>
               )}
+              {isUserDoctor && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    setDoctorDashboardOpen(true);
+                  }}
+                  className="w-full py-3 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-sm inline-flex items-center justify-center gap-2"
+                >
+                  <Stethoscope className="w-4 h-4 text-white" />
+                  <span>Кабинет врача ({doctorAppointmentsCount})</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => {
@@ -1152,8 +1323,14 @@ export function App() {
                 Вы вошли как: <strong>{currentUser.displayName}</strong> · Роль:{' '}
                 <span className="font-bold text-[#0D9488]">
                   {isUserAdmin
-                    ? 'Главный администратор (Логин: 1)'
-                    : 'Клиент клиники (Google)'}
+                    ? 'Главный администратор CRM (Логин: 1)'
+                    : isUserDoctor
+                    ? `Врач клиники (${currentUser.doctorSpecialty || 'Специалист'})`
+                    : `Клиент клиники${
+                        currentUser.petName
+                          ? ` · Питомец: ${currentUser.petSpecies || ''} «${currentUser.petName}»`
+                          : ''
+                      }`}
                 </span>
               </span>
             </div>
@@ -1167,12 +1344,30 @@ export function App() {
                   Открыть панель управления клиникой →
                 </button>
               )}
+              {isUserDoctor && (
+                <button
+                  type="button"
+                  onClick={() => setDoctorDashboardOpen(true)}
+                  className="font-bold text-amber-700 hover:underline cursor-pointer"
+                >
+                  Открыть кабинет врача ({doctorAppointmentsCount}) →
+                </button>
+              )}
+              {!isUserAdmin && !isUserDoctor && (
+                <button
+                  type="button"
+                  onClick={() => setSavedAppointmentsModalOpen(true)}
+                  className="font-bold text-[#0D9488] hover:underline cursor-pointer"
+                >
+                  Мои заявки и медкарта питомца ({activeAppointmentsCount}) →
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setAuthModalOpen(true)}
                 className="font-semibold text-[#335249] hover:text-[#0F2922] cursor-pointer"
               >
-                Профиль аккаунта
+                Сменить аккаунт
               </button>
             </div>
           </div>
@@ -1899,14 +2094,11 @@ export function App() {
                 <button
                   type="button"
                   onClick={() => {
-                    if (currentUser.authSource === 'guest') {
-                      setAuthReasonMessage(
-                        'Для публикации отзыва войдите через аккаунт Google.'
-                      );
-                      setAuthModalOpen(true);
-                      return;
+                    if (reviewFormOpen) {
+                      setReviewFormOpen(false);
+                    } else {
+                      openReviewFormWithPrefill();
                     }
-                    setReviewFormOpen((prev) => !prev);
                   }}
                   className="py-2.5 px-4 rounded-xl bg-[#0D9488] hover:bg-[#0F766E] text-white text-xs font-bold inline-flex items-center gap-2 transition-snappy cursor-pointer"
                 >
@@ -2454,6 +2646,9 @@ export function App() {
         onCancelAppointment={handleCancelAppointment}
         onRescheduleAppointment={handleRescheduleAppointment}
         onDeleteCancelledAppointment={handleDeleteAppointment}
+        onOpenReviewForAppointment={(record) => openReviewFormWithPrefill(record)}
+        onOpenAuthModal={() => setAuthModalOpen(true)}
+        onUserUpdated={(updatedUser) => setCurrentUser(updatedUser)}
         onNewAppointment={() => {
           setSavedAppointmentsModalOpen(false);
           openBookingWithContext();
@@ -2481,6 +2676,8 @@ export function App() {
           onUpdateAppointmentNotes={handleUpdateAppointmentNotes}
           onUpdateAppointmentRecommendation={handleUpdateAppointmentRecommendation}
           onUpdateAppointmentPrice={handleUpdateAppointmentPrice}
+          onUpdateAppointmentDoctor={handleUpdateAppointmentDoctor}
+          onUpdateAppointmentDate={handleRescheduleAppointment}
           onSyncAllAppointmentPrices={handleSyncAllAppointmentPrices}
           onDeleteAppointment={handleDeleteAppointment}
           onCreateManualAppointment={handleCreateManualAdminAppointment}
@@ -2491,6 +2688,20 @@ export function App() {
           onDeleteDoctor={handleDeleteDoctor}
           onDeleteReview={handleDeleteReview}
           onResetDemoData={handleResetDemoData}
+        />
+      )}
+
+      {isUserDoctor && (
+        <DoctorDashboard
+          isOpen={doctorDashboardOpen}
+          onClose={() => setDoctorDashboardOpen(false)}
+          currentUser={currentUser}
+          appointments={appointments}
+          onUpdateAppointmentStatus={handleUpdateAppointmentStatus}
+          onUpdateAppointmentNotes={handleUpdateAppointmentNotes}
+          onUpdateAppointmentRecommendation={handleUpdateAppointmentRecommendation}
+          onClaimAppointment={handleUpdateAppointmentDoctor}
+          servicesList={servicesList}
         />
       )}
     </div>

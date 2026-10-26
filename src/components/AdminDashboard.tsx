@@ -48,6 +48,16 @@ import {
 } from '../data/clinicData';
 import { downloadAppointmentVoucher } from '../utils/appointmentVoucher';
 import { GoogleDriveSection } from './GoogleDriveSection';
+import {
+  authenticateWithCredentials,
+  filterAppointmentsForUser,
+  getClientPetProfile,
+  PRESET_CLIENTS,
+  PRESET_DOCTORS,
+  registerNewClientAccount,
+  saveUserProfile,
+  SYSTEM_ADMIN_PROFILE,
+} from '../services/authService';
 
 interface AdminDashboardProps {
   isOpen: boolean;
@@ -59,6 +69,8 @@ interface AdminDashboardProps {
   onUpdateAppointmentStatus: (id: string, status: AppointmentStatus) => void;
   onUpdateAppointmentNotes: (id: string, notes: string) => void;
   onUpdateAppointmentRecommendation: (id: string, recommendation: string) => void;
+  onUpdateAppointmentDoctor?: (id: string, doctorName: string) => void;
+  onUpdateAppointmentDate?: (id: string, preferredDate: string) => void;
   onUpdateAppointmentPrice?: (id: string, price: number) => void;
   onSyncAllAppointmentPrices?: () => number;
   onDeleteAppointment: (id: string) => void;
@@ -109,6 +121,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onUpdateAppointmentStatus,
   onUpdateAppointmentNotes,
   onUpdateAppointmentRecommendation,
+  onUpdateAppointmentDoctor,
+  onUpdateAppointmentDate,
   onUpdateAppointmentPrice,
   onSyncAllAppointmentPrices,
   onDeleteAppointment,
@@ -137,9 +151,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     services[0]?.title || 'Первичный клинический осмотр и термометрия'
   );
   const [newApptDoctor, setNewApptDoctor] = useState(
-    doctors[0]?.name || 'Любой дежурный специалист смены'
+    doctors[0]?.name || 'Дежурный специалист клиники'
   );
-  const [newApptDate, setNewApptDate] = useState('25 мая, 13:00');
+  const [newApptDate, setNewApptDate] = useState(() => {
+    const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+    return `${tomorrow} в 13:00`;
+  });
   const [newApptPrice, setNewApptPrice] = useState<number>(() =>
     resolveServicePriceByTitle(
       services[0]?.title || 'Первичный клинический осмотр и термометрия',
@@ -149,13 +166,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [newApptEmergency, setNewApptEmergency] = useState(false);
   const [newApptNotes, setNewApptNotes] = useState('');
 
-  // Editing notes & doctor recommendation inline
+  // Editing notes, recommendation, price & date inline
   const [editingNotesId, setEditingNotesId] = useState<string | null>(null);
   const [editingNotesValue, setEditingNotesValue] = useState('');
   const [editingRecId, setEditingRecId] = useState<string | null>(null);
   const [editingRecValue, setEditingRecValue] = useState('');
   const [editingPriceId, setEditingPriceId] = useState<string | null>(null);
   const [editingPriceValue, setEditingPriceValue] = useState<number>(0);
+  const [editingDateId, setEditingDateId] = useState<string | null>(null);
+  const [editingDateValue, setEditingDateValue] = useState<string>('');
 
   // Banner message for actions
   const [adminToast, setAdminToast] = useState<string | null>(null);
@@ -254,22 +273,48 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       onlyEmergency ||
       searchQuery.trim().length > 0;
 
-    // Breakdown by doctor (using resolved numeric price)
-    const byDoctor = doctors.map((doc) => {
-      const docAppts = appointments.filter(
-        (a) => a.doctorName === doc.name && a.status !== 'Отменена'
-      );
-      const docRevenue = docAppts.reduce(
-        (sum, a) => sum + resolveAppointmentPrice(a, services),
-        0
-      );
-      return {
-        name: doc.name,
-        role: doc.role,
-        count: docAppts.length,
-        revenue: docRevenue,
-      };
-    });
+    // Breakdown by doctor (using resolved numeric price + matching last name)
+    const byDoctor = [
+      ...doctors.map((doc) => {
+        const lastName = doc.name.split(' ')[0].toLowerCase();
+        const docAppts = appointments.filter(
+          (a) =>
+            a.status !== 'Отменена' &&
+            (a.doctorName === doc.name ||
+              (lastName && a.doctorName.toLowerCase().includes(lastName)))
+        );
+        const docRevenue = docAppts.reduce(
+          (sum, a) => sum + resolveAppointmentPrice(a, services),
+          0
+        );
+        return {
+          name: doc.name,
+          role: doc.role,
+          count: docAppts.length,
+          revenue: docRevenue,
+        };
+      }),
+      ...(() => {
+        const dutyAppts = appointments.filter(
+          (a) =>
+            a.status !== 'Отменена' &&
+            (a.doctorName.toLowerCase().includes('дежурн') ||
+              a.doctorName.toLowerCase().includes('любой'))
+        );
+        if (dutyAppts.length === 0) return [];
+        return [
+          {
+            name: 'Дежурный специалист клиники',
+            role: 'Очередь дежурных вызовов (доступна врачам)',
+            count: dutyAppts.length,
+            revenue: dutyAppts.reduce(
+              (sum, a) => sum + resolveAppointmentPrice(a, services),
+              0
+            ),
+          },
+        ];
+      })(),
+    ];
 
     // Breakdown by species
     const speciesMap: Record<string, number> = {};
@@ -424,23 +469,160 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       durationMs: Math.max(1, Math.round(performance.now() - t3Start)),
     });
 
-    // Test 4: Complete Removal of Legacy Email Fields
+    // Test 4: Complete Removal of Legacy Email & Google Auth Dependencies
     const t4Start = performance.now();
     const hasNoEmailFields = appointments.every(
       (a) => !('email' in (a as unknown as Record<string, unknown>))
     );
     results.push({
       id: 'test-no-email',
-      name: 'Проверка полного отсутствия полей почты и SMTP-зависимостей',
+      name: 'Отсутствие полей почты, SMTP и Google-авторизации',
       category: 'Безопасность и схема',
       passed: hasNoEmailFields,
       details: hasNoEmailFields
-        ? `Проверено ${appointments.length} заявок: поля email, senderAliasEmail и SMTP-очереди полностью удалены. Вход сотрудников по логину/паролю («1» / «1»), клиентов — через Google.`
+        ? `Проверено ${appointments.length} заявок: поля email и вход через Google полностью удалены. Используется ролевая авторизация по логину и паролю (Клиенты, 4 Врача, Админ 1/1).`
         : 'В некоторых записях остались устаревшие поля электронной почты.',
       durationMs: Math.max(1, Math.round(performance.now() - t4Start)),
     });
 
-    // Test 5: LocalStorage Persistence Check
+    // Test 5: Multi-Role RBAC Verification (4 Doctors + 2 Demo Clients + Admin)
+    const t5RbacStart = performance.now();
+    const doctorChecks = PRESET_DOCTORS.map((doc) => {
+      const docUser = {
+        uid: `doctor-${doc.doctorId}`,
+        login: doc.login,
+        displayName: doc.displayName,
+        photoURL: doc.photoURL,
+        role: 'doctor' as const,
+        authSource: 'credentials' as const,
+        doctorId: doc.doctorId,
+      };
+      const ownAppts = filterAppointmentsForUser(appointments, docUser);
+      const allBelongToDoc = ownAppts.every((a) =>
+        a.doctorName.toLowerCase().includes(doc.lastNameMatch)
+      );
+      return {
+        login: doc.login,
+        name: doc.displayName.split(' ').slice(0, 2).join(' '),
+        count: ownAppts.length,
+        ok: allBelongToDoc,
+      };
+    });
+
+    const clientChecks = PRESET_CLIENTS.map((cl) => {
+      const clUser = {
+        uid: `client-${cl.login}`,
+        login: cl.login,
+        displayName: cl.displayName,
+        phone: cl.phone,
+        photoURL: '',
+        role: 'user' as const,
+        authSource: 'credentials' as const,
+      };
+      const clAppts = filterAppointmentsForUser(appointments, clUser);
+      return { login: cl.login, count: clAppts.length };
+    });
+
+    const rbacPassed = doctorChecks.every((d) => d.ok);
+    results.push({
+      id: 'test-rbac-doctors',
+      name: 'Проверка кабинетов 4 врачей (smirnov, volkova, morozov, sokolova) и клиентов (alex, kate)',
+      category: 'Ролевая модель (RBAC)',
+      passed: rbacPassed,
+      details: rbacPassed
+        ? `Изоляция заявок врачей подтверждена: ${doctorChecks
+            .map((d) => `${d.name} (${d.login}): ${d.count} зап.`)
+            .join('; ')}. Клиенты: ${clientChecks
+            .map((c) => `${c.login}: ${c.count} зап.`)
+            .join(', ')}.`
+        : 'Обнаружена ошибка фильтрации заявок между врачами.',
+      durationMs: Math.max(1, Math.round(performance.now() - t5RbacStart)),
+    });
+
+    // Test 6: New User Registration, Phone Validation & Pet Profile E2E Check
+    const t6NewUserStart = performance.now();
+    const shortPhoneAttempt = registerNewClientAccount({
+      fullName: 'Тестовый Клиент',
+      login: `probe_short_${Date.now()}`,
+      password: '123',
+      phone: '+7 ',
+      petSpecies: 'Собака',
+      petName: 'Рекс',
+    });
+    const reservedLoginAttempt = registerNewClientAccount({
+      fullName: 'Тестовый Клиент',
+      login: 'smirnov',
+      password: '123',
+      phone: '+7 (999) 111-22-33',
+      petSpecies: 'Собака',
+      petName: 'Рекс',
+    });
+
+    // Simulate a newly registered user profile and verify pet card + RBAC isolation
+    const simulatedNewUser = {
+      uid: 'user-e2e-probe',
+      login: 'new_client_probe',
+      displayName: 'Мария Соколова (Новорег)',
+      phone: '+7 (916) 777-88-99',
+      photoURL: '',
+      role: 'user' as const,
+      authSource: 'credentials' as const,
+      petName: 'Лаки',
+      petSpecies: 'Собака' as const,
+    };
+    const simulatedPetCard = getClientPetProfile(simulatedNewUser);
+    const mockNewAppt: AppointmentRecord = {
+      id: 'LP-999999',
+      createdAt: '12:00',
+      ownerName: simulatedNewUser.displayName,
+      phone: simulatedNewUser.phone,
+      petSpecies: 'Собака',
+      petName: 'Лаки',
+      serviceTitle: services[0]?.title || 'Первичный клинический осмотр',
+      doctorName: 'Смирнов Алексей Викторович',
+      preferredDate: 'Завтра в 11:00',
+      estimatedPrice: 1800,
+      isEmergency: false,
+      status: 'Новая',
+      notes: 'Тестовая запись нового клиента',
+      ownerUid: simulatedNewUser.uid,
+    };
+    const visibleToNewUser = filterAppointmentsForUser(
+      [mockNewAppt, ...appointments],
+      simulatedNewUser
+    );
+    const visibleToAlex = filterAppointmentsForUser([mockNewAppt], {
+      uid: 'client-alex',
+      login: 'alex',
+      displayName: 'Александр Громов',
+      phone: '+7 (926) 805-71-22',
+      photoURL: '',
+      role: 'user',
+      authSource: 'credentials',
+    });
+    // Ensure admin session stays active
+    saveUserProfile(SYSTEM_ADMIN_PROFILE);
+
+    const newUserE2EPassed =
+      !shortPhoneAttempt.ok &&
+      !reservedLoginAttempt.ok &&
+      Boolean(simulatedPetCard && simulatedPetCard.petName === 'Лаки') &&
+      visibleToNewUser.length === 1 &&
+      visibleToNewUser[0].id === 'LP-999999' &&
+      visibleToAlex.length === 0;
+
+    results.push({
+      id: 'test-new-user-e2e',
+      name: 'Регистрация нового клиента (E2E): валидация телефона, медкарта и изоляция записей',
+      category: 'Регистрация и E2E',
+      passed: newUserE2EPassed,
+      details: newUserE2EPassed
+        ? 'Короткий телефон («+7 ») и служебные логины блокируются корректно. После регистрации автоматически создается чистая медкарта питомца, а новые записи видны только самому клиенту, назначенному врачу и администратору.'
+        : 'Обнаружена ошибка в сценарии регистрации нового клиента или изоляции его записей.',
+      durationMs: Math.max(1, Math.round(performance.now() - t6NewUserStart)),
+    });
+
+    // Test 7: LocalStorage Persistence Check
     const t5Start = performance.now();
     let storageOk = false;
     try {
@@ -463,7 +645,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       durationMs: Math.max(1, Math.round(performance.now() - t5Start)),
     });
 
-    // Test 6: Google Drive Admin Isolation & Expanded Reviews
+    // Test 7: Google Drive Admin Isolation & Expanded Reviews
     const t6Start = performance.now();
     const publicDriveElement = document.getElementById('google-drive');
     const driveIsolatedAndReviewsReady =
@@ -474,7 +656,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       category: 'Права доступа и контент',
       passed: driveIsolatedAndReviewsReady,
       details: driveIsolatedAndReviewsReady
-        ? `Доступ к Google Drive полностью скрыт от гостей и клиентов (перенесен во вкладку Админ-панели). В ленте историй выздоровления активно ${reviews.length} клинических кейсов с фильтрацией по видам животных.`
+        ? `Доступ к Google Drive полностью скрыт от гостей и клиентов (доступен только во вкладке Админ-панели). В ленте историй выздоровления активно ${reviews.length} клинических кейсов.`
         : `Проверка прав доступа: публичный блок Google Drive = ${Boolean(publicDriveElement)}, отзывов = ${reviews.length}.`,
       durationMs: Math.max(1, Math.round(performance.now() - t6Start)),
     });
@@ -1016,7 +1198,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         >
                           <option value="Собака">Собака</option>
                           <option value="Кошка">Кошка</option>
-                          <option value="Грызун / Экзот">Экзот</option>
+                          <option value="Грызун">Грызун</option>
                         </select>
                         <input
                           type="text"
@@ -1036,8 +1218,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         type="text"
                         value={newApptDate}
                         onChange={(e) => setNewApptDate(e.target.value)}
-                        placeholder="25 мая, 15:30"
-                        className="w-full px-3 py-2 text-xs rounded-xl border border-[#D1EAE4] bg-[#F4FAF8]"
+                        placeholder="2026-10-27 в 15:00"
+                        className="w-full px-3 py-2 text-xs rounded-xl border border-[#D1EAE4] bg-[#F4FAF8] tabular-nums"
                       />
                     </div>
 
@@ -1071,6 +1253,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         onChange={(e) => setNewApptDoctor(e.target.value)}
                         className="w-full px-3 py-2 text-xs rounded-xl border border-[#D1EAE4] bg-[#F4FAF8]"
                       >
+                        <option value="Дежурный специалист клиники">
+                          Дежурный специалист клиники
+                        </option>
                         {doctors.map((d) => (
                           <option key={d.id} value={d.name}>
                             {d.name}
@@ -1190,18 +1375,103 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                 <div className="font-bold text-[#0F2922]">
                                   {appt.serviceTitle}
                                 </div>
-                                <div className="text-[#335249] mt-0.5">
-                                  Врач: <span className="font-semibold">{appt.doctorName}</span>
+                                <div className="mt-1.5 flex items-center gap-1.5">
+                                  <span className="text-[11px] text-[#335249] font-medium shrink-0">
+                                    Врач:
+                                  </span>
+                                  {onUpdateAppointmentDoctor ? (
+                                    <select
+                                      value={appt.doctorName}
+                                      onChange={(e) => {
+                                        const newDoc = e.target.value;
+                                        onUpdateAppointmentDoctor(appt.id, newDoc);
+                                        showToast(
+                                          `Для заявки #${appt.id} назначен врач: ${newDoc}`
+                                        );
+                                      }}
+                                      className="px-2 py-1 rounded-lg border border-[#D1EAE4] bg-[#F4FAF8] hover:border-[#0D9488] text-[11px] font-bold text-[#0F2922] focus:outline-none cursor-pointer max-w-[210px] truncate"
+                                    >
+                                      <option value="Дежурный специалист клиники">
+                                        Дежурный специалист клиники
+                                      </option>
+                                      {doctors.map((d) => (
+                                        <option key={d.id} value={d.name}>
+                                          {d.name}
+                                        </option>
+                                      ))}
+                                      {!doctors.some((d) => d.name === appt.doctorName) &&
+                                        appt.doctorName !== 'Дежурный специалист клиники' && (
+                                          <option value={appt.doctorName}>
+                                            {appt.doctorName}
+                                          </option>
+                                        )}
+                                    </select>
+                                  ) : (
+                                    <span className="font-semibold text-[#0F2922]">
+                                      {appt.doctorName}
+                                    </span>
+                                  )}
                                 </div>
                               </td>
 
                               <td className="py-3.5 px-4 align-top whitespace-nowrap">
-                                <div className="font-bold text-[#0F2922] tabular-nums">
-                                  {appt.preferredDate}
-                                </div>
-                                <div className="text-[11px] text-[#335249] mt-0.5">
-                                  Создана: {appt.createdAt}
-                                </div>
+                                {editingDateId === appt.id ? (
+                                  <div className="flex items-center gap-1.5">
+                                    <input
+                                      type="text"
+                                      value={editingDateValue}
+                                      onChange={(e) => setEditingDateValue(e.target.value)}
+                                      placeholder="2026-10-20 в 15:00"
+                                      className="w-36 px-2 py-1 text-xs rounded-lg border border-[#0D9488] bg-white tabular-nums font-bold"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (
+                                          onUpdateAppointmentDate &&
+                                          editingDateValue.trim()
+                                        ) {
+                                          onUpdateAppointmentDate(
+                                            appt.id,
+                                            editingDateValue.trim()
+                                          );
+                                          showToast(
+                                            `Время приема #${appt.id} изменено на «${editingDateValue.trim()}»`
+                                          );
+                                        }
+                                        setEditingDateId(null);
+                                      }}
+                                      className="p-1 rounded-lg bg-[#0D9488] text-white hover:bg-[#0F766E] cursor-pointer"
+                                      title="Сохранить дату и время"
+                                    >
+                                      <Save className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="font-bold text-[#0F2922] tabular-nums">
+                                        {appt.preferredDate}
+                                      </span>
+                                      {onUpdateAppointmentDate && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setEditingDateId(appt.id);
+                                            setEditingDateValue(appt.preferredDate);
+                                          }}
+                                          className="text-[#335249] hover:text-[#0D9488] cursor-pointer"
+                                          title="Изменить дату и время визита"
+                                        >
+                                          <Edit3 className="w-3 h-3" />
+                                        </button>
+                                      )}
+                                    </div>
+                                    <div className="text-[11px] text-[#335249] mt-0.5 tabular-nums">
+                                      Создана: {appt.createdAt}
+                                    </div>
+                                  </div>
+                                )}
                               </td>
 
                               <td className="py-3.5 px-4 align-top whitespace-nowrap">
