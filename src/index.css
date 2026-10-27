@@ -2,12 +2,13 @@
 
 @layer base {
   :root {
-    --background: #FFFFFF;
-    --surface: #F4FAF8;
-    --surface-accent: #E6F4F1;
-    --border-subtle: #D1EAE4;
-    --text-primary: #0F2922;
-    --text-secondary: #335249;
+    --background: #EAF2EE;
+    --surface: #F3F8F5;
+    --surface-card: #FCFBF7;
+    --surface-accent: #E1EFEA;
+    --border-subtle: #CFE2DA;
+    --text-primary: #122B24;
+    --text-secondary: #35544B;
     --primary: #0D9488;
     --primary-hover: #0F766E;
     --accent: #F97316;
@@ -19,6 +20,11 @@
     scroll-behavior: smooth;
     color: var(--text-primary);
     background-color: var(--background);
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--text-primary);
   }
 
   h1, h2, h3, h4 {

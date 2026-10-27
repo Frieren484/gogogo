@@ -70,6 +70,8 @@ export interface DoctorAccountConfig {
   doctorSpecialty: string;
   photoURL: string;
   lastNameMatch: string;
+  brigade: 1 | 2;
+  shiftLabel: string;
 }
 
 export const PRESET_DOCTORS: DoctorAccountConfig[] = [
@@ -77,37 +79,89 @@ export const PRESET_DOCTORS: DoctorAccountConfig[] = [
     doctorId: 'smirnov',
     login: 'smirnov',
     displayName: 'Смирнов Алексей Викторович',
-    doctorSpecialty: 'Главный врач, хирург-ортопед',
+    doctorSpecialty: 'Главный врач, хирург-ортопед (Бригада №1 · 10:00–20:00)',
     photoURL:
       'https://images.unsplash.com/photo-1612349317150-e413f6a5b16d?auto=format&fit=crop&w=400&q=80',
     lastNameMatch: 'смирнов',
+    brigade: 1,
+    shiftLabel: 'Бригада 1 · День 10:00–20:00',
   },
   {
     doctorId: 'volkova',
     login: 'volkova',
     displayName: 'Волкова Елена Сергеевна',
-    doctorSpecialty: 'Ведущий терапевт, кардиолог',
+    doctorSpecialty: 'Ведущий терапевт, кардиолог (Бригада №1 · 10:00–20:00)',
     photoURL:
       'https://images.unsplash.com/photo-1594824476967-48c8b964273f?auto=format&fit=crop&w=400&q=80',
     lastNameMatch: 'волков',
+    brigade: 1,
+    shiftLabel: 'Бригада 1 · День 10:00–20:00',
   },
   {
     doctorId: 'morozov',
     login: 'morozov',
     displayName: 'Морозов Дмитрий Игоревич',
-    doctorSpecialty: 'Врач УЗ-диагностики, реаниматолог',
+    doctorSpecialty: 'Врач УЗ-диагностики, реаниматолог (Бригада №1 · 20:00–10:00)',
     photoURL:
       'https://images.unsplash.com/photo-1537368910025-700350fe46c7?auto=format&fit=crop&w=400&q=80',
     lastNameMatch: 'морозов',
+    brigade: 1,
+    shiftLabel: 'Бригада 1 · Ночь 20:00–10:00',
   },
   {
     doctorId: 'sokolova',
     login: 'sokolova',
     displayName: 'Соколова Анна Павловна',
-    doctorSpecialty: 'Врач-ратолог, стоматолог',
+    doctorSpecialty: 'Врач-ратолог, стоматолог (Бригада №1 · 20:00–10:00)',
     photoURL:
       'https://images.unsplash.com/photo-1559839734-2b71ea197ec2?auto=format&fit=crop&w=400&q=80',
     lastNameMatch: 'соколов',
+    brigade: 1,
+    shiftLabel: 'Бригада 1 · Ночь 20:00–10:00',
+  },
+  {
+    doctorId: 'vasiliev',
+    login: 'vasiliev',
+    displayName: 'Васильев Михаил Юрьевич',
+    doctorSpecialty: 'Ведущий хирург-травматолог (Бригада №2 · 10:00–20:00)',
+    photoURL:
+      'https://images.unsplash.com/photo-1622253692010-333f2da6031d?auto=format&fit=crop&w=400&q=80',
+    lastNameMatch: 'васильев',
+    brigade: 2,
+    shiftLabel: 'Бригада 2 · День 10:00–20:00',
+  },
+  {
+    doctorId: 'pavlova',
+    login: 'pavlova',
+    displayName: 'Павлова Ирина Николаевна',
+    doctorSpecialty: 'Врач-терапевт, эндокринолог (Бригада №2 · 10:00–20:00)',
+    photoURL:
+      'https://images.unsplash.com/photo-1527613426441-4da17471b66d?auto=format&fit=crop&w=400&q=80',
+    lastNameMatch: 'павлов',
+    brigade: 2,
+    shiftLabel: 'Бригада 2 · День 10:00–20:00',
+  },
+  {
+    doctorId: 'kuznetsov',
+    login: 'kuznetsov',
+    displayName: 'Кузнецов Артём Романович',
+    doctorSpecialty: 'Заведующий ОРИТ, реаниматолог (Бригада №2 · 20:00–10:00)',
+    photoURL:
+      'https://images.unsplash.com/photo-1582750433449-648ed127bb54?auto=format&fit=crop&w=400&q=80',
+    lastNameMatch: 'кузнецов',
+    brigade: 2,
+    shiftLabel: 'Бригада 2 · Ночь 20:00–10:00',
+  },
+  {
+    doctorId: 'novikova',
+    login: 'novikova',
+    displayName: 'Новикова Ольга Дмитриевна',
+    doctorSpecialty: 'Врач-дерматолог, аллерголог (Бригада №2 · 20:00–10:00)',
+    photoURL:
+      'https://images.unsplash.com/photo-1651008376811-b90baee60c1f?auto=format&fit=crop&w=400&q=80',
+    lastNameMatch: 'новиков',
+    brigade: 2,
+    shiftLabel: 'Бригада 2 · Ночь 20:00–10:00',
   },
 ];
 

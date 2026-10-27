@@ -39,17 +39,21 @@ import {
   AppointmentStatus,
   CLINIC_INFO,
   createRandomClientAppointments,
+  DEFAULT_SHIFT_SCHEDULE_CONFIG,
   DoctorProfile,
+  getDoctorShiftForDate,
+  getDutyBrigadeForDate,
   PetStoryReview,
   resolveAppointmentPrice,
+  resolveDefaultDoctorForService,
   resolveServicePriceByTitle,
   ServiceCategory,
   ServiceItem,
+  ShiftScheduleConfig,
 } from '../data/clinicData';
 import { downloadAppointmentVoucher } from '../utils/appointmentVoucher';
 import { GoogleDriveSection } from './GoogleDriveSection';
 import {
-  authenticateWithCredentials,
   filterAppointmentsForUser,
   getClientPetProfile,
   PRESET_CLIENTS,
@@ -66,6 +70,8 @@ interface AdminDashboardProps {
   services: ServiceItem[];
   doctors: DoctorProfile[];
   reviews: PetStoryReview[];
+  shiftConfig?: ShiftScheduleConfig;
+  onUpdateShiftConfig?: (config: ShiftScheduleConfig) => void;
   onUpdateAppointmentStatus: (id: string, status: AppointmentStatus) => void;
   onUpdateAppointmentNotes: (id: string, notes: string) => void;
   onUpdateAppointmentRecommendation: (id: string, recommendation: string) => void;
@@ -118,6 +124,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   services,
   doctors,
   reviews,
+  shiftConfig = DEFAULT_SHIFT_SCHEDULE_CONFIG,
+  onUpdateShiftConfig,
   onUpdateAppointmentStatus,
   onUpdateAppointmentNotes,
   onUpdateAppointmentRecommendation,
@@ -141,6 +149,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [doctorFilter, setDoctorFilter] = useState<string>('Все');
   const [onlyEmergency, setOnlyEmergency] = useState(false);
 
+  const todayIso = new Date().toISOString().split('T')[0];
+
   // Manual appointment modal/form state
   const [isAddingAppointment, setIsAddingAppointment] = useState(false);
   const [newApptOwner, setNewApptOwner] = useState('');
@@ -151,11 +161,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     services[0]?.title || 'Первичный клинический осмотр и термометрия'
   );
   const [newApptDoctor, setNewApptDoctor] = useState(
-    doctors[0]?.name || 'Дежурный специалист клиники'
+    services[0]?.defaultDoctorName || doctors[0]?.name || 'Дежурный специалист клиники'
   );
   const [newApptDate, setNewApptDate] = useState(() => {
     const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
-    return `${tomorrow} в 13:00`;
+    return `${tomorrow} в 12:00`;
   });
   const [newApptPrice, setNewApptPrice] = useState<number>(() =>
     resolveServicePriceByTitle(
@@ -199,6 +209,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }, 4500);
   };
 
+  // Upcoming 14 days for the interactive brigade shift calendar
+  const upcoming14Days = useMemo(() => {
+    const days: Array<{ iso: string; label: string; weekday: string; brigade: 1 | 2; isManual: boolean }> = [];
+    const base = new Date(`${todayIso}T00:00:00`);
+    for (let i = 0; i < 14; i++) {
+      const d = new Date(base.getTime() + i * 86400000);
+      const iso = d.toISOString().split('T')[0];
+      const brigade = getDutyBrigadeForDate(iso, shiftConfig);
+      const isManual = Boolean(shiftConfig.manualOverrides && shiftConfig.manualOverrides[iso]);
+      days.push({
+        iso,
+        label: i === 0 ? 'Сегодня' : i === 1 ? 'Завтра' : d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }),
+        weekday: d.toLocaleDateString('ru-RU', { weekday: 'short' }),
+        brigade,
+        isManual,
+      });
+    }
+    return days;
+  }, [todayIso, shiftConfig]);
+
   // Filtered appointments for the table AND filtered KPI calculations
   const filteredAppointments = useMemo(() => {
     return appointments.filter((item) => {
@@ -230,16 +260,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     const cancelledCount = appointments.filter((a) => a.status === 'Отменена').length;
     const emergencyCount = appointments.filter((a) => a.isEmergency).length;
 
-    // All active (non-cancelled) appointments in database
     const allActiveAppointments = appointments.filter((a) => a.status !== 'Отменена');
     const allActiveRevenue = allActiveAppointments.reduce(
       (sum, a) => sum + resolveAppointmentPrice(a, services),
       0
     );
 
-    // Filtered appointments (respecting search, statusFilter, doctorFilter, onlyEmergency)
-    // If statusFilter === 'Отменена', we sum the cancelled ones so the admin sees the exact sum of the filtered rows;
-    // otherwise we sum non-cancelled rows in the current filter view.
     const filteredForSum =
       statusFilter === 'Отменена'
         ? filteredAppointments
@@ -261,7 +287,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         ? Math.round(allActiveRevenue / allActiveAppointments.length)
         : 0;
 
-    // Check if any appointment has an out-of-sync estimatedPrice compared to catalog priceFrom
     const unsyncedCount = appointments.filter((a) => {
       const catalogPrice = resolveServicePriceByTitle(a.serviceTitle, services);
       return Number(a.estimatedPrice) !== catalogPrice;
@@ -273,7 +298,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       onlyEmergency ||
       searchQuery.trim().length > 0;
 
-    // Breakdown by doctor (using resolved numeric price + matching last name)
     const byDoctor = [
       ...doctors.map((doc) => {
         const lastName = doc.name.split(' ')[0].toLowerCase();
@@ -316,7 +340,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       })(),
     ];
 
-    // Breakdown by species
     const speciesMap: Record<string, number> = {};
     appointments.forEach((a) => {
       speciesMap[a.petSpecies] = (speciesMap[a.petSpecies] || 0) + 1;
@@ -351,6 +374,50 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   ]);
 
   if (!isOpen) return null;
+
+  const handleSetDutyBrigadeForDate = (dateIso: string, targetBrigade: 1 | 2) => {
+    if (!onUpdateShiftConfig) return;
+    const nextOverrides = {
+      ...(shiftConfig.manualOverrides || {}),
+      [dateIso]: targetBrigade,
+    };
+    onUpdateShiftConfig({
+      ...shiftConfig,
+      manualOverrides: nextOverrides,
+    });
+    showToast(
+      `На дату ${dateIso} назначена Дежурная бригада №${targetBrigade}. Расписание всех 8 врачей обновлено.`
+    );
+  };
+
+  const handleToggleDateBrigade = (dateIso: string) => {
+    const current = getDutyBrigadeForDate(dateIso, shiftConfig);
+    const nextBrigade: 1 | 2 = current === 1 ? 2 : 1;
+    handleSetDutyBrigadeForDate(dateIso, nextBrigade);
+  };
+
+  const handleSetCycleMode = (mode: '2_2' | 'daily') => {
+    if (!onUpdateShiftConfig) return;
+    onUpdateShiftConfig({
+      ...shiftConfig,
+      cycleMode: mode,
+    });
+    showToast(
+      mode === '2_2'
+        ? 'Включен классический график смен «2 через 2» (дневная 10:00–20:00 и ночная 20:00–10:00).'
+        : 'Включен режим ежедневной смены дежурной бригады (каждый день).'
+    );
+  };
+
+  const handleResetShiftOverrides = () => {
+    if (!onUpdateShiftConfig) return;
+    onUpdateShiftConfig({
+      ...shiftConfig,
+      anchorDate: todayIso,
+      manualOverrides: {},
+    });
+    showToast('Ручные корректировки календаря сброшены к базовому графику 2/2.');
+  };
 
   const handleSyncPricesClick = () => {
     if (onSyncAllAppointmentPrices) {
@@ -392,15 +459,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       );
     results.push({
       id: 'test-services',
-      name: 'Целостность прайс-листа и числовых тарифов клиники',
-      category: 'Каталог и цены',
+      name: 'Целостность прайс-листа, числовых тарифов и закрепленных врачей',
+      category: 'Каталог и направления',
       passed: validServices,
       details: validServices
-        ? `Загружено ${services.length} услуг. Все тарифы числовые (от ${Math.min(
+        ? `Загружено ${services.length} услуг. За каждым направлением закреплен профильный врач (с возможностью смены клиентом). Тарифы от ${Math.min(
             ...services.map((s) => s.priceFrom)
           ).toLocaleString('ru-RU')} ₽ до ${Math.max(
             ...services.map((s) => s.priceFrom)
-          ).toLocaleString('ru-RU')} ₽).`
+          ).toLocaleString('ru-RU')} ₽.`
         : 'Обнаружены услуги с некорректной ценой или пустым названием.',
       durationMs: Math.max(1, Math.round(performance.now() - t1Start)),
     });
@@ -480,12 +547,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       category: 'Безопасность и схема',
       passed: hasNoEmailFields,
       details: hasNoEmailFields
-        ? `Проверено ${appointments.length} заявок: поля email и вход через Google полностью удалены. Используется ролевая авторизация по логину и паролю (Клиенты, 4 Врача, Админ 1/1).`
+        ? `Проверено ${appointments.length} заявок: поля email и вход через Google полностью удалены. В окне входа работают выдвижные вкладки быстрого выбора для Клиентов (включая новорегов), 8 Врачей и Админа (1/1).`
         : 'В некоторых записях остались устаревшие поля электронной почты.',
       durationMs: Math.max(1, Math.round(performance.now() - t4Start)),
     });
 
-    // Test 5: Multi-Role RBAC Verification (4 Doctors + 2 Demo Clients + Admin)
+    // Test 5: Multi-Role RBAC Verification (8 Doctors + 2 Demo Clients + Admin)
     const t5RbacStart = performance.now();
     const doctorChecks = PRESET_DOCTORS.map((doc) => {
       const docUser = {
@@ -523,14 +590,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       return { login: cl.login, count: clAppts.length };
     });
 
-    const rbacPassed = doctorChecks.every((d) => d.ok);
+    const rbacPassed = doctorChecks.length === 8 && doctorChecks.every((d) => d.ok);
     results.push({
       id: 'test-rbac-doctors',
-      name: 'Проверка кабинетов 4 врачей (smirnov, volkova, morozov, sokolova) и клиентов (alex, kate)',
+      name: 'Проверка кабинетов всех 8 врачей (Бригады №1 и №2) и клиентов (alex, kate)',
       category: 'Ролевая модель (RBAC)',
       passed: rbacPassed,
       details: rbacPassed
-        ? `Изоляция заявок врачей подтверждена: ${doctorChecks
+        ? `Изоляция заявок 8 врачей подтверждена: ${doctorChecks
             .map((d) => `${d.name} (${d.login}): ${d.count} зап.`)
             .join('; ')}. Клиенты: ${clientChecks
             .map((c) => `${c.login}: ${c.count} зап.`)
@@ -539,7 +606,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       durationMs: Math.max(1, Math.round(performance.now() - t5RbacStart)),
     });
 
-    // Test 6: New User Registration, Phone Validation & Pet Profile E2E Check
+    // Test 6: 2/2 Shift Schedule, Day/Night Shifts (10-20 / 20-10) & Personal Doctor Time Slots
+    const tShiftStart = performance.now();
+    const shiftCheckOk =
+      doctors.length >= 8 &&
+      doctors.every(
+        (d) =>
+          (d.brigade === 1 || d.brigade === 2) &&
+          (d.shiftType === 'day' || d.shiftType === 'night') &&
+          Array.isArray(d.personalSlots) &&
+          d.personalSlots.length >= 4
+      );
+    const brigade1Count = doctors.filter((d) => d.brigade === 1).length;
+    const brigade2Count = doctors.filter((d) => d.brigade === 2).length;
+    results.push({
+      id: 'test-shifts-2-2',
+      name: 'График 2/2 (дневные 10:00–20:00 и ночные 20:00–10:00 смены) и личные окна врачей',
+      category: 'Расписание 2/2 и слоты',
+      passed: shiftCheckOk,
+      details: shiftCheckOk
+        ? `В штате ${doctors.length} врачей (Бригада №1: ${brigade1Count} вр., Бригада №2: ${brigade2Count} вр.). У каждого врача заданы собственные часы приема, занятые слоты блокируются («Занято»), а в выходные дни работает предварительная бронь.`
+        : 'У части врачей не заполнены параметры бригады 1/2 или индивидуальные временные слоты.',
+      durationMs: Math.max(1, Math.round(performance.now() - tShiftStart)),
+    });
+
+    // Test 7: New User Registration, Phone Validation & Pet Profile E2E Check
     const t6NewUserStart = performance.now();
     const shortPhoneAttempt = registerNewClientAccount({
       fullName: 'Тестовый Клиент',
@@ -558,7 +649,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       petName: 'Рекс',
     });
 
-    // Simulate a newly registered user profile and verify pet card + RBAC isolation
     const simulatedNewUser = {
       uid: 'user-e2e-probe',
       login: 'new_client_probe',
@@ -600,7 +690,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       role: 'user',
       authSource: 'credentials',
     });
-    // Ensure admin session stays active
     saveUserProfile(SYSTEM_ADMIN_PROFILE);
 
     const newUserE2EPassed =
@@ -613,16 +702,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
     results.push({
       id: 'test-new-user-e2e',
-      name: 'Регистрация нового клиента (E2E): валидация телефона, медкарта и изоляция записей',
+      name: 'Регистрация нового клиента (E2E): сохранение в выдвижной список клиентов и изоляция',
       category: 'Регистрация и E2E',
       passed: newUserE2EPassed,
       details: newUserE2EPassed
-        ? 'Короткий телефон («+7 ») и служебные логины блокируются корректно. После регистрации автоматически создается чистая медкарта питомца, а новые записи видны только самому клиенту, назначенному врачу и администратору.'
+        ? 'Новые клиенты автоматически попадают в выдвижную вкладку «Клиенты клиники» для 1-клик подстановки логина/пароля, получают чистую медкарту питомца и полную изоляцию своих записей.'
         : 'Обнаружена ошибка в сценарии регистрации нового клиента или изоляции его записей.',
       durationMs: Math.max(1, Math.round(performance.now() - t6NewUserStart)),
     });
 
-    // Test 7: LocalStorage Persistence Check
+    // Test 8: LocalStorage Persistence Check
     const t5Start = performance.now();
     let storageOk = false;
     try {
@@ -645,7 +734,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       durationMs: Math.max(1, Math.round(performance.now() - t5Start)),
     });
 
-    // Test 7: Google Drive Admin Isolation & Expanded Reviews
+    // Test 9: Google Drive Admin Isolation & Expanded Reviews
     const t6Start = performance.now();
     const publicDriveElement = document.getElementById('google-drive');
     const driveIsolatedAndReviewsReady =
@@ -765,6 +854,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       description: '',
       included: ['Осмотр специалиста', 'Заключение в медкарту'],
       featured: false,
+      defaultDoctorName: doctors[0]?.name || 'Волкова Елена Сергеевна',
     });
     setIsCreatingService(true);
   };
@@ -782,6 +872,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       photoUrl: '/images/vet-doctor-1.jpg',
       fallbackTitle: 'Специалист клиники',
       accentColor: '#0D9488',
+      brigade: 1,
+      shiftType: 'day',
+      shiftHours: '10:00–20:00',
+      personalSlots: ['10:00', '11:30', '13:00', '15:00', '16:30', '18:00', '19:15'],
+      assignedDirections: ['Терапия и общая диагностика'],
     });
     setIsCreatingDoctor(true);
   };
@@ -996,7 +1091,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             }`}
           >
             <Users className="w-4 h-4" />
-            <span>Штат врачей ({doctors.length})</span>
+            <span>Штат врачей ({doctors.length}) и График 2/2</span>
           </button>
 
           <button
@@ -1233,12 +1328,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           const title = e.target.value;
                           setNewApptService(title);
                           setNewApptPrice(resolveServicePriceByTitle(title, services));
+                          const attachedDoc = resolveDefaultDoctorForService(title, services);
+                          if (attachedDoc) {
+                            setNewApptDoctor(attachedDoc);
+                          }
                         }}
                         className="w-full px-3 py-2 text-xs rounded-xl border border-[#D1EAE4] bg-[#F4FAF8]"
                       >
                         {services.map((s) => (
                           <option key={s.id} value={s.title}>
-                            {s.title} (от {s.priceFrom.toLocaleString('ru-RU')} ₽)
+                            {s.title} (от {s.priceFrom.toLocaleString('ru-RU')} ₽ · {s.defaultDoctorName ? s.defaultDoctorName.split(' ')[0] : 'Дежурный'})
                           </option>
                         ))}
                       </select>
@@ -1867,10 +1966,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <div className="bg-white rounded-2xl border border-[#D1EAE4] p-4 flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h3 className="text-sm font-extrabold text-[#0F2922]">
-                    Управление прайс-листом и медицинскими программами
+                    Управление прайс-листом, программами и закрепленными врачами направлений
                   </h3>
                   <p className="text-xs text-[#335249]">
-                    При изменении стоимости услуги в прайс-листе цены связанных заявок синхронизируются автоматически
+                    К каждому направлению и комплексу прикреплен профильный врач по умолчанию (клиент также может поменять его при записи)
                   </p>
                 </div>
                 <button
@@ -1978,6 +2077,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
                     <div className="sm:col-span-3">
                       <label className="block font-bold text-[#0F2922] mb-1">
+                        Закрепленный врач направления (подставляется по умолчанию)
+                      </label>
+                      <select
+                        value={editingService.defaultDoctorName || 'Дежурный специалист клиники'}
+                        onChange={(e) =>
+                          setEditingService({
+                            ...editingService,
+                            defaultDoctorName: e.target.value,
+                          })
+                        }
+                        className="w-full px-3 py-2 rounded-xl border border-[#D1EAE4] bg-[#F4FAF8] font-bold text-[#0F2922]"
+                      >
+                        <option value="Дежурный специалист клиники">
+                          Дежурный специалист клиники
+                        </option>
+                        {doctors.map((d) => (
+                          <option key={d.id} value={d.name}>
+                            {d.name} — {d.role} (Бригада №{d.brigade}, {d.shiftHours})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="sm:col-span-4">
+                      <label className="block font-bold text-[#0F2922] mb-1">
                         Клиническое описание услуги
                       </label>
                       <input
@@ -2072,6 +2196,36 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       <p className="text-xs text-[#335249] line-clamp-2 mb-3">
                         {service.description}
                       </p>
+
+                      {/* Быстрая смена закрепленного врача прямо в карточке услуги */}
+                      <div className="mb-3 p-2.5 rounded-xl bg-[#F4FAF8] border border-[#D1EAE4]">
+                        <label className="block text-[10px] font-bold uppercase tracking-wider text-[#0D9488] mb-1">
+                          Закрепленный врач направления:
+                        </label>
+                        <select
+                          value={service.defaultDoctorName || 'Дежурный специалист клиники'}
+                          onChange={(e) => {
+                            const updated = {
+                              ...service,
+                              defaultDoctorName: e.target.value,
+                            };
+                            onSaveService(updated);
+                            showToast(
+                              `К направлению «${service.title}» прикреплен врач: ${e.target.value}`
+                            );
+                          }}
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-[#D1EAE4] bg-white text-xs font-bold text-[#0F2922] focus:outline-none focus:border-[#0D9488] cursor-pointer"
+                        >
+                          <option value="Дежурный специалист клиники">
+                            Дежурный специалист клиники
+                          </option>
+                          {doctors.map((d) => (
+                            <option key={d.id} value={d.name}>
+                              {d.name} ({d.shiftHours})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
 
                     <div className="pt-3 border-t border-[#D1EAE4] flex items-center justify-between gap-2">
@@ -2086,7 +2240,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           className="py-1.5 px-3 rounded-lg bg-[#F4FAF8] hover:bg-[#E6F4F1] text-xs font-bold text-[#0F2922] inline-flex items-center gap-1 cursor-pointer"
                         >
                           <Edit3 className="w-3.5 h-3.5 text-[#0D9488]" />
-                          <span>Изменить цену</span>
+                          <span>Редактировать</span>
                         </button>
                         <button
                           type="button"
@@ -2104,16 +2258,127 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
           )}
 
-          {/* TAB 4: DOCTORS ROSTER EDITOR */}
+          {/* TAB 4: DOCTORS ROSTER & 2/2 SHIFT CONFIGURATOR */}
           {activeTab === 'doctors' && (
-            <div className="space-y-4">
+            <div className="space-y-5">
+              {/* Interactive Duty Brigade & 2/2 Shift Configurator */}
+              <div className="bg-white rounded-2xl border-2 border-[#0D9488]/50 p-5 space-y-4 shadow-xs">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-[#D1EAE4] pb-4">
+                  <div>
+                    <div className="inline-flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider text-[#0D9488] mb-1">
+                      <Calendar className="w-4 h-4" />
+                      <span>Настройка дежурных бригад и графика смен 2/2 (10:00–20:00 и 20:00–10:00)</span>
+                    </div>
+                    <h3 className="text-base font-extrabold text-[#0F2922]">
+                      Сегодня ({todayIso}) на смене:{' '}
+                      <span className="text-[#0D9488]">
+                        Дежурная бригада №{getDutyBrigadeForDate(todayIso, shiftConfig)}
+                      </span>
+                    </h3>
+                    <p className="text-xs text-[#335249] mt-0.5">
+                      В каждой бригаде 4 врача: 2 работают в дневную смену (10:00–20:00) и 2 — в ночную (20:00–10:00). Нажмите на любой день в календаре ниже, чтобы вручную поменять дежурную бригаду.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleSetDutyBrigadeForDate(todayIso, 1)}
+                      className={`py-2 px-3.5 rounded-xl text-xs font-bold transition-snappy cursor-pointer border ${
+                        getDutyBrigadeForDate(todayIso, shiftConfig) === 1
+                          ? 'bg-[#0D9488] text-white border-[#0D9488]'
+                          : 'bg-[#F4FAF8] text-[#0F2922] border-[#D1EAE4] hover:border-[#0D9488]'
+                      }`}
+                    >
+                      Дежурит сегодня: Бригада №1
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleSetDutyBrigadeForDate(todayIso, 2)}
+                      className={`py-2 px-3.5 rounded-xl text-xs font-bold transition-snappy cursor-pointer border ${
+                        getDutyBrigadeForDate(todayIso, shiftConfig) === 2
+                          ? 'bg-[#0D9488] text-white border-[#0D9488]'
+                          : 'bg-[#F4FAF8] text-[#0F2922] border-[#D1EAE4] hover:border-[#0D9488]'
+                      }`}
+                    >
+                      Дежурит сегодня: Бригада №2
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleSetCycleMode(shiftConfig.cycleMode === '2_2' ? 'daily' : '2_2')
+                      }
+                      className="py-2 px-3.5 rounded-xl bg-[#FFF7ED] border border-[#FDBA74] hover:bg-[#FFEDD5] text-xs font-bold text-[#9A3412] transition-snappy cursor-pointer"
+                    >
+                      Режим: {shiftConfig.cycleMode === '2_2' ? 'График 2 через 2' : 'Смена каждый день'}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleResetShiftOverrides}
+                      className="py-2 px-3 rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] hover:border-[#0D9488] text-xs font-semibold text-[#335249] hover:text-[#0F2922] transition-snappy cursor-pointer"
+                      title="Сбросить ручные правки дней к автоматическому циклу"
+                    >
+                      Сбросить правки
+                    </button>
+                  </div>
+                </div>
+
+                {/* 14-day interactive brigade calendar */}
+                <div>
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <span className="text-xs font-bold text-[#0F2922]">
+                      Интерактивный календарь дежурств на 14 дней (клик по дате переключает Бригаду №1 ↔ №2):
+                    </span>
+                    <span className="text-[11px] text-[#335249]">
+                      Ручных правок: {Object.keys(shiftConfig.manualOverrides || {}).length}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2">
+                    {upcoming14Days.map((d) => (
+                      <button
+                        key={d.iso}
+                        type="button"
+                        onClick={() => handleToggleDateBrigade(d.iso)}
+                        className={`p-2.5 rounded-xl border text-left transition-snappy cursor-pointer ${
+                          d.brigade === 1
+                            ? 'bg-[#E6F4F1]/80 border-[#0D9488] text-[#0F2922]'
+                            : 'bg-indigo-50/80 border-indigo-300 text-indigo-950'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between text-[11px] font-bold">
+                          <span>{d.label}</span>
+                          <span className="uppercase opacity-75">{d.weekday}</span>
+                        </div>
+                        <div className="mt-1 flex items-center justify-between gap-1">
+                          <span
+                            className={`text-xs font-extrabold ${
+                              d.brigade === 1 ? 'text-[#0D9488]' : 'text-indigo-700'
+                            }`}
+                          >
+                            Бригада №{d.brigade}
+                          </span>
+                          {d.isManual && (
+                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-200/80 text-amber-900">
+                              Вручную
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
               <div className="bg-white rounded-2xl border border-[#D1EAE4] p-4 flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h3 className="text-sm font-extrabold text-[#0F2922]">
-                    Управление штатом специалистов клиники
+                    Управление штатом специалистов клиники ({doctors.length} врачей в 2 бригадах)
                   </h3>
                   <p className="text-xs text-[#335249]">
-                    Добавляйте врачей, обновляйте их специализацию, стаж и образование
+                    Настраивайте бригаду (1 или 2), смену (10:00–20:00 или 20:00–10:00) и персональные часы приема каждого врача
                   </p>
                 </div>
                 <button
@@ -2188,6 +2453,67 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             experienceYears: Number(e.target.value) || 1,
                           })
                         }
+                        className="w-full px-3 py-2 rounded-xl border border-[#D1EAE4] bg-[#F4FAF8] tabular-nums"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block font-bold text-[#0F2922] mb-1">
+                        Дежурная бригада (график 2/2)
+                      </label>
+                      <select
+                        value={editingDoctor.brigade}
+                        onChange={(e) =>
+                          setEditingDoctor({
+                            ...editingDoctor,
+                            brigade: Number(e.target.value) === 2 ? 2 : 1,
+                          })
+                        }
+                        className="w-full px-3 py-2 rounded-xl border border-[#D1EAE4] bg-[#F4FAF8] font-bold"
+                      >
+                        <option value={1}>Бригада №1</option>
+                        <option value={2}>Бригада №2</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block font-bold text-[#0F2922] mb-1">
+                        Тип смены врача (10–20 или 20–10)
+                      </label>
+                      <select
+                        value={editingDoctor.shiftType}
+                        onChange={(e) => {
+                          const isNight = e.target.value === 'night';
+                          setEditingDoctor({
+                            ...editingDoctor,
+                            shiftType: isNight ? 'night' : 'day',
+                            shiftHours: isNight ? '20:00–10:00' : '10:00–20:00',
+                          });
+                        }}
+                        className="w-full px-3 py-2 rounded-xl border border-[#D1EAE4] bg-[#F4FAF8] font-bold"
+                      >
+                        <option value="day">Дневная смена (10:00–20:00)</option>
+                        <option value="night">Ночная смена (20:00–10:00)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block font-bold text-[#0F2922] mb-1">
+                        Индивидуальные окна врача (через запятую)
+                      </label>
+                      <input
+                        type="text"
+                        value={(editingDoctor.personalSlots || []).join(', ')}
+                        onChange={(e) =>
+                          setEditingDoctor({
+                            ...editingDoctor,
+                            personalSlots: e.target.value
+                              .split(',')
+                              .map((s) => s.trim())
+                              .filter(Boolean),
+                          })
+                        }
+                        placeholder="10:00, 11:30, 13:00, 15:00..."
                         className="w-full px-3 py-2 rounded-xl border border-[#D1EAE4] bg-[#F4FAF8] tabular-nums"
                       />
                     </div>
@@ -2290,50 +2616,71 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </div>
               )}
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {doctors.map((doc) => (
-                  <div
-                    key={doc.id}
-                    className="bg-white rounded-2xl border border-[#D1EAE4] p-5 flex flex-col justify-between"
-                  >
-                    <div>
-                      <div className="flex items-center justify-between gap-2 mb-2">
-                        <span className="px-2.5 py-0.5 rounded-md bg-[#E6F4F1] text-[#0D9488] text-[11px] font-bold">
-                          Стаж {doc.experienceYears} лет
-                        </span>
-                        <Award className="w-4 h-4 text-[#F97316]" />
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {doctors.map((doc) => {
+                  const todayShift = getDoctorShiftForDate(doc, todayIso, shiftConfig);
+                  return (
+                    <div
+                      key={doc.id}
+                      className="bg-white rounded-2xl border border-[#D1EAE4] p-4 flex flex-col justify-between"
+                    >
+                      <div>
+                        <div className="flex flex-wrap items-center justify-between gap-1.5 mb-2">
+                          <span className="px-2 py-0.5 rounded-md bg-[#E6F4F1] text-[#0D9488] text-[10px] font-bold">
+                            Бригада №{doc.brigade || 1} · {doc.shiftHours || '10:00–20:00'}
+                          </span>
+                          <span
+                            className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                              todayShift.isWorkingToday
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : 'bg-amber-100 text-amber-800'
+                            }`}
+                          >
+                            {todayShift.isWorkingToday ? 'На смене сегодня' : 'Сегодня выходной'}
+                          </span>
+                        </div>
+                        <h4 className="text-sm font-extrabold text-[#0F2922]">{doc.name}</h4>
+                        <p className="text-xs font-semibold text-[#0D9488] mt-0.5 mb-2">
+                          {doc.role}
+                        </p>
+                        <div className="text-[11px] text-[#335249] mb-2">
+                          <strong>Личные слоты:</strong>{' '}
+                          <span className="tabular-nums">
+                            {(doc.personalSlots || []).join(', ')}
+                          </span>
+                        </div>
+                        {doc.assignedDirections && doc.assignedDirections.length > 0 && (
+                          <div className="text-[11px] text-[#0F2922] bg-[#F4FAF8] border border-[#D1EAE4] rounded-lg px-2.5 py-1.5 mb-3">
+                            <strong>Направления:</strong> {doc.assignedDirections.join(', ')}
+                          </div>
+                        )}
                       </div>
-                      <h4 className="text-base font-extrabold text-[#0F2922]">{doc.name}</h4>
-                      <p className="text-xs font-semibold text-[#0D9488] mt-0.5 mb-2">
-                        {doc.role}
-                      </p>
-                      <p className="text-xs text-[#335249] mb-3">{doc.education}</p>
-                    </div>
 
-                    <div className="pt-3 border-t border-[#D1EAE4] flex items-center justify-between gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingDoctor(doc);
-                          setIsCreatingDoctor(false);
-                        }}
-                        className="py-1.5 px-3 rounded-lg bg-[#F4FAF8] hover:bg-[#E6F4F1] text-xs font-bold text-[#0F2922] inline-flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <Edit3 className="w-3.5 h-3.5 text-[#0D9488]" />
-                        <span>Редактировать</span>
-                      </button>
+                      <div className="pt-3 border-t border-[#D1EAE4] flex items-center justify-between gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingDoctor(doc);
+                            setIsCreatingDoctor(false);
+                          }}
+                          className="py-1.5 px-3 rounded-lg bg-[#F4FAF8] hover:bg-[#E6F4F1] text-xs font-bold text-[#0F2922] inline-flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Edit3 className="w-3.5 h-3.5 text-[#0D9488]" />
+                          <span>Изменить график</span>
+                        </button>
 
-                      <button
-                        type="button"
-                        onClick={() => onDeleteDoctor(doc.id)}
-                        className="p-1.5 rounded-lg bg-[#F4FAF8] hover:bg-red-50 text-[#335249] hover:text-red-600 cursor-pointer"
-                        title="Удалить врача"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => onDeleteDoctor(doc.id)}
+                          className="p-1.5 rounded-lg bg-[#F4FAF8] hover:bg-red-50 text-[#335249] hover:text-red-600 cursor-pointer"
+                          title="Удалить врача"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

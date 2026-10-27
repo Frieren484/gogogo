@@ -1,27 +1,36 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  BookmarkCheck,
   Calendar,
   CheckCircle2,
   ClipboardCheck,
   Clock,
   Download,
+  Moon,
   PawPrint,
   Phone,
   ShieldCheck,
+  Stethoscope,
+  Sun,
   User,
   X,
 } from 'lucide-react';
 import {
   AppointmentRecord,
   CALCULATOR_PACKAGES,
+  DEFAULT_SHIFT_SCHEDULE_CONFIG,
   DoctorProfile,
   DOCTORS_DATA,
+  getDoctorShiftForDate,
+  getNextWorkingDatesForDoctor,
   PetType,
   PET_TYPES_CONFIG,
+  resolveDefaultDoctorForService,
   resolveServicePriceByTitle,
   ServiceItem,
   SERVICES_DATA,
+  ShiftScheduleConfig,
 } from '../data/clinicData';
 import { AppUserProfile, getClientPetProfile } from '../services/authService';
 import {
@@ -33,6 +42,8 @@ export interface BookingPrefill {
   petType?: PetType;
   serviceTitle?: string;
   doctorName?: string;
+  preferredDate?: string;
+  date?: string;
   estimatedPrice?: number;
   isEmergency?: boolean;
 }
@@ -46,19 +57,9 @@ interface BookingModalProps {
   doctorsList?: DoctorProfile[];
   currentUser?: AppUserProfile;
   existingAppointments?: AppointmentRecord[];
+  shiftConfig?: ShiftScheduleConfig;
   onShowToast?: (message: string) => void;
 }
-
-const TIME_SLOTS = [
-  '09:00',
-  '11:00',
-  '13:00',
-  '15:00',
-  '17:00',
-  '19:00',
-  '21:00',
-  '00:00 (Ночной прием)',
-];
 
 export const BookingModal: React.FC<BookingModalProps> = ({
   isOpen,
@@ -69,6 +70,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   doctorsList = DOCTORS_DATA,
   currentUser,
   existingAppointments = [],
+  shiftConfig = DEFAULT_SHIFT_SCHEDULE_CONFIG,
   onShowToast,
 }) => {
   const todayDate = new Date().toISOString().split('T')[0];
@@ -81,7 +83,9 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const [selectedService, setSelectedService] = useState<string>(
     servicesList[0]?.title || SERVICES_DATA[0].title
   );
-  const [selectedDoctor, setSelectedDoctor] = useState<string>('Дежурный специалист клиники');
+  const [selectedDoctor, setSelectedDoctor] = useState<string>(
+    servicesList[0]?.defaultDoctorName || 'Волкова Елена Сергеевна'
+  );
   const [preferredDate, setPreferredDate] = useState<string>(tomorrowDate);
   const [preferredTime, setPreferredTime] = useState<string>('11:00');
   const [notes, setNotes] = useState<string>('');
@@ -104,7 +108,57 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     return Array.from(optionSet);
   }, [servicesList, prefill?.serviceTitle, selectedService]);
 
-  // Защита от двойной записи к одному врачу на одно и то же время:
+  // Закрепленный профильный врач для выбранного направления / комплекса
+  const recommendedDoctorForService = useMemo(
+    () => resolveDefaultDoctorForService(selectedService, servicesList, doctorsList),
+    [selectedService, servicesList, doctorsList]
+  );
+
+  // Объект выбранного врача из штата (8 специалистов)
+  const selectedDoctorProfile = useMemo(
+    () => doctorsList.find((d) => d.name === selectedDoctor),
+    [doctorsList, selectedDoctor]
+  );
+
+  // Информация о смене выбранного врача на выбранную дату (график 2/2, дневная 10–20 или ночная 20–10, личные слоты)
+  const doctorShiftInfo = useMemo(
+    () => getDoctorShiftForDate(selectedDoctorProfile, preferredDate, shiftConfig),
+    [selectedDoctorProfile, preferredDate, shiftConfig]
+  );
+
+  // Ближайшие рабочие даты выбранного врача по графику 2/2
+  const nextWorkingDates = useMemo(
+    () => getNextWorkingDatesForDoctor(selectedDoctorProfile, todayDate, 4, shiftConfig),
+    [selectedDoctorProfile, todayDate, shiftConfig]
+  );
+
+  // 7-дневная лента графика выбранного врача для наглядного выбора дня
+  const doctor7DaySchedule = useMemo(() => {
+    return Array.from({ length: 7 }, (_, idx) => {
+      const d = new Date(Date.now() + idx * 86400000);
+      const iso = d.toISOString().split('T')[0];
+      const dayLabel = d.toLocaleDateString('ru-RU', {
+        weekday: 'short',
+        day: 'numeric',
+        month: 'short',
+      });
+      const shift = getDoctorShiftForDate(selectedDoctorProfile, iso, shiftConfig);
+      return {
+        iso,
+        dayLabel,
+        isWorking: shift.isWorkingOnDate,
+        shiftType: shift.shiftType,
+        shiftHours: shift.shiftHours,
+      };
+    });
+  }, [selectedDoctorProfile, shiftConfig]);
+
+  // Персональные слоты времени для текущего выбранного врача
+  const activeTimeSlots = useMemo(
+    () => doctorShiftInfo.personalSlots,
+    [doctorShiftInfo.personalSlots]
+  );
+
   // Вычисляем занятые часы для выбранного специалиста и даты среди активных заявок (status !== 'Отменена')
   const occupiedSlotsForDoctorAndDate = useMemo(() => {
     if (!preferredDate || selectedDoctor === 'Дежурный специалист клиники') {
@@ -114,25 +168,33 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     existingAppointments.forEach((appt) => {
       if (appt.status === 'Отменена') return;
       if (appt.doctorName !== selectedDoctor) return;
-      const [apptDate, apptTime] = appt.preferredDate.split(' в ').map((s) => s.trim());
-      if (apptDate === preferredDate && apptTime) {
-        busy.add(apptTime);
+      const [apptDate, apptTimeRaw] = appt.preferredDate.split(' в ').map((s) => s.trim());
+      if (apptDate === preferredDate && apptTimeRaw) {
+        const cleanTime = apptTimeRaw.replace(/\s*\(.*?\)\s*/g, '').trim();
+        busy.add(cleanTime);
+        busy.add(apptTimeRaw);
       }
     });
     return busy;
   }, [existingAppointments, selectedDoctor, preferredDate]);
 
-  // Автоматически переключаем время на первый свободный слот, если текущий оказался занят
+  // Автоматически переключаем время на первый свободный слот из персонального расписания врача,
+  // если текущее время не входит в смену этого врача или уже занято
   useEffect(() => {
-    if (occupiedSlotsForDoctorAndDate.has(preferredTime)) {
-      const firstAvailable = TIME_SLOTS.find(
+    const isSlotInDoctorSchedule = activeTimeSlots.includes(preferredTime);
+    const isCurrentOccupied = occupiedSlotsForDoctorAndDate.has(preferredTime);
+
+    if (!isSlotInDoctorSchedule || isCurrentOccupied) {
+      const firstAvailable = activeTimeSlots.find(
         (slot) => !occupiedSlotsForDoctorAndDate.has(slot)
       );
       if (firstAvailable) {
         setPreferredTime(firstAvailable);
+      } else if (activeTimeSlots[0]) {
+        setPreferredTime(activeTimeSlots[0]);
       }
     }
-  }, [occupiedSlotsForDoctorAndDate, preferredTime]);
+  }, [activeTimeSlots, occupiedSlotsForDoctorAndDate, preferredTime]);
 
   // Умная памятка подготовки к выбранной услуге
   const preparationGuide = useMemo(
@@ -179,7 +241,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         setOwnerName(currentUser.displayName.replace(/\s*\(.*?\)\s*/g, '').trim());
         setPhone(currentUser.phone || '');
 
-        // Автоподстановка данных из сохраненной электронной медкарты питомца
         const savedPetCard = getClientPetProfile(currentUser);
         if (savedPetCard && savedPetCard.petName) {
           setPetName(savedPetCard.petName);
@@ -209,7 +270,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({
           setNotes('');
         }
       } else {
-        // Для врача, администратора или гостя оставляем поля чистыми для ввода данных клиента
         setOwnerName('');
         setPhone('');
         setPetName('');
@@ -219,27 +279,53 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       if (prefill?.petType) {
         setPetSpecies(PET_TYPES_CONFIG[prefill.petType].label);
       }
-      if (prefill?.serviceTitle) {
-        setSelectedService(prefill.serviceTitle);
-      } else if (servicesList[0]?.title) {
-        setSelectedService(servicesList[0].title);
+
+      const initialService =
+        prefill?.serviceTitle || servicesList[0]?.title || SERVICES_DATA[0].title;
+      setSelectedService(initialService);
+
+      if (prefill?.preferredDate || prefill?.date) {
+        setPreferredDate(prefill.preferredDate || prefill.date || tomorrowDate);
+      } else {
+        setPreferredDate(tomorrowDate);
       }
+
+      // Если передан конкретный врач — ставим его, иначе ставим закрепленного врача выбранного направления
       if (prefill?.doctorName) {
         setSelectedDoctor(prefill.doctorName);
       } else {
-        setSelectedDoctor('Дежурный специалист клиники');
+        const autoAssignedDoctor = resolveDefaultDoctorForService(
+          initialService,
+          servicesList,
+          doctorsList
+        );
+        setSelectedDoctor(autoAssignedDoctor);
       }
     }
-  }, [isOpen, prefill, currentUser, servicesList]);
+  }, [isOpen, prefill, currentUser, servicesList, doctorsList, tomorrowDate]);
 
   if (!isOpen) return null;
+
+  const handleServiceChange = (newServiceTitle: string) => {
+    setSelectedService(newServiceTitle);
+    // При смене направления/комплекса автоматически подставляем закрепленного за ним профильного врача (его всегда можно поменять)
+    const assignedDoc = resolveDefaultDoctorForService(
+      newServiceTitle,
+      servicesList,
+      doctorsList
+    );
+    setSelectedDoctor(assignedDoc);
+  };
 
   const handlePhoneChange = (value: string) => {
     setPhone(value);
     if (errorMessage) setErrorMessage('');
   };
 
-  // Прямое оформление записи без кодов и без поля почты
+  const isBookingOnDoctorOffDay =
+    selectedDoctor !== 'Дежурный специалист клиники' &&
+    !doctorShiftInfo.isWorkingOnDate;
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
@@ -283,6 +369,13 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       return;
     }
 
+    const baseNote =
+      notes.trim() ||
+      (prefill?.isEmergency ? 'Экстренный вызов через сайт' : 'Запись онлайн через сайт');
+    const finalNotes = isBookingOnDoctorOffDay
+      ? `${baseNote} [Оформлено по предварительной брони — у врача выходной по графику 2/2]`
+      : baseNote;
+
     const newRecord: AppointmentRecord = {
       id: `LP-${Math.floor(100000 + Math.random() * 900000)}`,
       createdAt: new Date().toLocaleTimeString('ru-RU', {
@@ -295,13 +388,14 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       petName: trimmedPet,
       serviceTitle: selectedService,
       doctorName: selectedDoctor,
-      preferredDate: `${preferredDate} в ${preferredTime}`,
+      preferredDate: `${preferredDate} в ${preferredTime}${
+        isBookingOnDoctorOffDay ? ' (по брони)' : ''
+      }`,
       estimatedPrice: computedEstimatedPrice,
       isEmergency: prefill?.isEmergency || false,
+      isAdvanceBooking: isBookingOnDoctorOffDay,
       status: 'Новая',
-      notes:
-        notes.trim() ||
-        (prefill?.isEmergency ? 'Экстренный вызов через сайт' : 'Запись онлайн через сайт'),
+      notes: finalNotes,
       ownerUid: currentUser.role === 'user' ? currentUser.uid : undefined,
     };
 
@@ -310,7 +404,9 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
     if (onShowToast) {
       onShowToast(
-        `Заявка #${newRecord.id} для питомца «${newRecord.petName}» успешно оформлена на ${newRecord.preferredDate}!`
+        isBookingOnDoctorOffDay
+          ? `Бронь #${newRecord.id} к врачу «${newRecord.doctorName}» успешно оформлена на ${newRecord.preferredDate}!`
+          : `Заявка #${newRecord.id} для питомца «${newRecord.petName}» успешно оформлена на ${newRecord.preferredDate}!`
       );
     }
   };
@@ -329,19 +425,19 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       aria-modal="true"
       aria-labelledby="booking-modal-title"
     >
-      <div className="relative w-full max-w-xl rounded-2xl bg-white border border-[#D1EAE4] shadow-2xl overflow-hidden my-8">
+      <div className="relative w-full max-w-2xl rounded-2xl bg-[#FCFBF7] border border-[#CFE2DA] shadow-2xl overflow-hidden my-8">
         {/* Top bar */}
-        <div className="flex items-center justify-between px-6 py-5 bg-[#F4FAF8] border-b border-[#D1EAE4]">
+        <div className="flex items-center justify-between px-6 py-5 bg-[#EEF5F1] border-b border-[#CFE2DA]">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-[#0D9488] flex items-center justify-center text-white shrink-0">
               <PawPrint className="w-5 h-5" />
             </div>
             <div>
-              <h3 id="booking-modal-title" className="text-lg font-bold text-[#0F2922]">
+              <h3 id="booking-modal-title" className="text-lg font-bold text-[#122B24]">
                 Запись на прием в «Лапу Помощи»
               </h3>
-              <p className="text-xs text-[#335249]">
-                Москва, ул. Профсоюзная, 45 · Круглосуточный прием 24/7
+              <p className="text-xs text-[#35524A]">
+                График врачей 2/2 (дневная смена 10:00–20:00 · ночная смена 20:00–10:00)
               </p>
             </div>
           </div>
@@ -349,7 +445,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             type="button"
             onClick={resetAndClose}
             aria-label="Закрыть окно"
-            className="w-9 h-9 rounded-lg flex items-center justify-center text-[#335249] hover:text-[#0F2922] hover:bg-[#E6F4F1] transition-snappy"
+            className="w-9 h-9 rounded-lg flex items-center justify-center text-[#35524A] hover:text-[#122B24] hover:bg-[#DCECE5] transition-snappy"
           >
             <X className="w-5 h-5" />
           </button>
@@ -360,50 +456,52 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             <div className="w-16 h-16 rounded-2xl bg-[#E6F4F1] text-[#0D9488] flex items-center justify-center mx-auto mb-4">
               <CheckCircle2 className="w-9 h-9" />
             </div>
-            <h4 className="text-xl sm:text-2xl font-bold text-[#0F2922] mb-2">
-              Ваш талон на приём успешно оформлен!
+            <h4 className="text-xl sm:text-2xl font-bold text-[#122B24] mb-2">
+              {submittedRecord.isAdvanceBooking
+                ? 'Предварительная бронь успешно оформлена!'
+                : 'Ваш талон на приём успешно оформлен!'}
             </h4>
-            <p className="text-xs sm:text-sm text-[#335249] max-w-md mx-auto mb-5">
+            <p className="text-xs sm:text-sm text-[#35524A] max-w-md mx-auto mb-5">
               Заявка{' '}
-              <span className="font-semibold text-[#0F2922] tabular-nums">
+              <span className="font-semibold text-[#122B24] tabular-nums">
                 #{submittedRecord.id}
               </span>{' '}
               сохранена в расписании клиники и доступна в разделе «Мои заявки».
             </p>
 
-            <div className="rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] p-4 text-left space-y-2 mb-4 text-sm">
+            <div className="rounded-xl bg-[#EEF5F1] border border-[#CFE2DA] p-4 text-left space-y-2 mb-4 text-sm">
               <div className="flex justify-between gap-4">
-                <span className="text-[#335249]">Владелец и телефон:</span>
-                <span className="font-semibold text-[#0F2922] text-right tabular-nums">
+                <span className="text-[#35524A]">Владелец и телефон:</span>
+                <span className="font-semibold text-[#122B24] text-right tabular-nums">
                   {submittedRecord.ownerName} ({submittedRecord.phone})
                 </span>
               </div>
               <div className="flex justify-between gap-4">
-                <span className="text-[#335249]">Пациент:</span>
-                <span className="font-semibold text-[#0F2922]">
+                <span className="text-[#35524A]">Пациент:</span>
+                <span className="font-semibold text-[#122B24]">
                   {submittedRecord.petSpecies} «{submittedRecord.petName}»
                 </span>
               </div>
               <div className="flex justify-between gap-4">
-                <span className="text-[#335249]">Услуга:</span>
-                <span className="font-semibold text-[#0F2922] text-right">
+                <span className="text-[#35524A]">Направление / Услуга:</span>
+                <span className="font-semibold text-[#122B24] text-right">
                   {submittedRecord.serviceTitle}
                 </span>
               </div>
               <div className="flex justify-between gap-4">
-                <span className="text-[#335249]">Специалист:</span>
-                <span className="font-medium text-[#0F2922] text-right">
+                <span className="text-[#35524A]">Специалист:</span>
+                <span className="font-medium text-[#122B24] text-right">
                   {submittedRecord.doctorName}
                 </span>
               </div>
               <div className="flex justify-between gap-4">
-                <span className="text-[#335249]">Дата и время:</span>
-                <span className="font-semibold text-[#0F2922] tabular-nums">
+                <span className="text-[#35524A]">Дата и время:</span>
+                <span className="font-semibold text-[#122B24] tabular-nums">
                   {submittedRecord.preferredDate}
                 </span>
               </div>
-              <div className="flex justify-between gap-4 pt-2 border-t border-[#D1EAE4]">
-                <span className="text-[#335249]">Расчетная стоимость:</span>
+              <div className="flex justify-between gap-4 pt-2 border-t border-[#CFE2DA]">
+                <span className="text-[#35524A]">Расчетная стоимость:</span>
                 <span className="font-bold text-[#0D9488] tabular-nums">
                   {submittedRecord.estimatedPrice.toLocaleString('ru-RU')} ₽
                 </span>
@@ -411,13 +509,13 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             </div>
 
             {/* Памятка подготовки к приему */}
-            <div className="rounded-xl bg-white border border-[#D1EAE4] p-4 text-left mb-5 space-y-1.5">
-              <div className="flex items-center gap-1.5 text-xs font-bold text-[#0F2922]">
+            <div className="rounded-xl bg-white border border-[#CFE2DA] p-4 text-left mb-5 space-y-1.5">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-[#122B24]">
                 <ClipboardCheck className="w-4 h-4 text-[#0D9488] shrink-0" />
                 <span>Памятка подготовки ({preparationGuide.categoryTitle}):</span>
               </div>
               {preparationGuide.items.map((item, idx) => (
-                <div key={idx} className="text-xs text-[#335249] flex items-start gap-1.5">
+                <div key={idx} className="text-xs text-[#35524A] flex items-start gap-1.5">
                   <span className="text-[#0D9488] font-bold">•</span>
                   <span>{item}</span>
                 </div>
@@ -435,7 +533,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                     );
                   }
                 }}
-                className="w-full py-3.5 px-4 rounded-xl bg-[#F4FAF8] hover:bg-[#E6F4F1] border border-[#0D9488] text-[#0F2922] font-bold text-xs sm:text-sm transition-snappy inline-flex items-center justify-center gap-2 cursor-pointer"
+                className="w-full py-3.5 px-4 rounded-xl bg-[#EEF5F1] hover:bg-[#DCECE5] border border-[#0D9488] text-[#122B24] font-bold text-xs sm:text-sm transition-snappy inline-flex items-center justify-center gap-2 cursor-pointer"
               >
                 <Download className="w-4 h-4 text-[#0D9488]" />
                 <span>Скачать талон и памятку (.txt)</span>
@@ -453,8 +551,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         ) : (
           <form onSubmit={handleSubmit} className="p-6 space-y-4">
             {computedEstimatedPrice > 0 && (
-              <div className="rounded-xl bg-[#E6F4F1] border border-[#D1EAE4] px-4 py-3 flex items-center justify-between gap-4">
-                <div className="text-xs text-[#0F2922]">
+              <div className="rounded-xl bg-[#E6F4F1] border border-[#CFE2DA] px-4 py-3 flex items-center justify-between gap-4">
+                <div className="text-xs text-[#122B24]">
                   <span className="font-semibold">
                     {prefill?.estimatedPrice && prefill?.serviceTitle === selectedService
                       ? 'Перенесено из калькулятора:'
@@ -469,7 +567,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             )}
 
             {autoFilledFromPetCard && (
-              <div className="rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] px-3.5 py-2 flex items-center justify-between gap-2 text-xs text-[#0F2922]">
+              <div className="rounded-xl bg-[#EEF5F1] border border-[#CFE2DA] px-3.5 py-2 flex items-center justify-between gap-2 text-xs text-[#122B24]">
                 <div className="flex items-center gap-2">
                   <PawPrint className="w-3.5 h-3.5 text-[#0D9488] shrink-0" />
                   <span>
@@ -488,34 +586,34 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-semibold text-[#0F2922] mb-1.5">
+                <label className="block text-xs font-semibold text-[#122B24] mb-1.5">
                   Ваше имя *
                 </label>
                 <div className="relative">
-                  <User className="w-4 h-4 text-[#335249] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <User className="w-4 h-4 text-[#35524A] absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
                     value={ownerName}
                     onChange={(e) => setOwnerName(e.target.value)}
                     placeholder="Например, Анна Иванова"
-                    className="w-full pl-10 pr-3.5 py-2.5 text-sm rounded-xl border border-[#D1EAE4] bg-white text-[#0F2922] focus:outline-none focus:border-[#0D9488]"
+                    className="w-full pl-10 pr-3.5 py-2.5 text-sm rounded-xl border border-[#CFE2DA] bg-white text-[#122B24] focus:outline-none focus:border-[#0D9488]"
                     required
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-[#0F2922] mb-1.5">
+                <label className="block text-xs font-semibold text-[#122B24] mb-1.5">
                   Контактный телефон *
                 </label>
                 <div className="relative">
-                  <Phone className="w-4 h-4 text-[#335249] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <Phone className="w-4 h-4 text-[#35524A] absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
                     type="tel"
                     value={phone}
                     onChange={(e) => handlePhoneChange(e.target.value)}
                     placeholder="+7 (999) 123-45-67"
-                    className="w-full pl-10 pr-3.5 py-2.5 text-sm rounded-xl border border-[#D1EAE4] bg-white text-[#0F2922] tabular-nums focus:outline-none focus:border-[#0D9488]"
+                    className="w-full pl-10 pr-3.5 py-2.5 text-sm rounded-xl border border-[#CFE2DA] bg-white text-[#122B24] tabular-nums focus:outline-none focus:border-[#0D9488]"
                     required
                   />
                 </div>
@@ -524,19 +622,19 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-semibold text-[#0F2922] mb-1.5">
+                <label className="block text-xs font-semibold text-[#122B24] mb-1.5">
                   Вид питомца *
                 </label>
-                <div className="grid grid-cols-3 gap-1.5 p-1 bg-[#F4FAF8] rounded-xl border border-[#D1EAE4]">
+                <div className="grid grid-cols-3 gap-1.5 p-1 bg-[#EEF5F1] rounded-xl border border-[#CFE2DA]">
                   {(['Кошка', 'Собака', 'Грызун'] as const).map((species) => (
                     <button
                       key={species}
                       type="button"
                       onClick={() => setPetSpecies(species)}
-                      className={`py-2 px-2 rounded-lg text-xs font-semibold transition-snappy whitespace-nowrap ${
+                      className={`py-2 px-2 rounded-lg text-xs font-semibold transition-snappy whitespace-nowrap cursor-pointer ${
                         petSpecies === species
                           ? 'bg-[#0D9488] text-white shadow-xs'
-                          : 'text-[#335249] hover:text-[#0F2922]'
+                          : 'text-[#35524A] hover:text-[#122B24]'
                       }`}
                     >
                       {species}
@@ -546,7 +644,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-[#0F2922] mb-1.5">
+                <label className="block text-xs font-semibold text-[#122B24] mb-1.5">
                   Кличка питомца *
                 </label>
                 <input
@@ -554,92 +652,256 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   value={petName}
                   onChange={(e) => setPetName(e.target.value)}
                   placeholder="Например, Барсик или Ричард"
-                  className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#D1EAE4] bg-white text-[#0F2922] focus:outline-none focus:border-[#0D9488]"
+                  className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#CFE2DA] bg-white text-[#122B24] focus:outline-none focus:border-[#0D9488]"
                   required
                 />
               </div>
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-[#0F2922] mb-1.5">
-                Выберите услугу или программу *
-              </label>
-              <select
-                value={selectedService}
-                onChange={(e) => setSelectedService(e.target.value)}
-                className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#D1EAE4] bg-white text-[#0F2922] focus:outline-none focus:border-[#0D9488]"
-              >
-                {allServiceOptions.map((service) => (
-                  <option key={service} value={service}>
-                    {service}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="sm:col-span-1">
-                <label className="block text-xs font-semibold text-[#0F2922] mb-1.5">
-                  Специалист
+            {/* Service & Attached Default Specialist */}
+            <div className="space-y-2">
+              <div>
+                <label className="block text-xs font-semibold text-[#122B24] mb-1.5">
+                  Выберите направление или комплексную программу *
                 </label>
                 <select
-                  value={selectedDoctor}
-                  onChange={(e) => setSelectedDoctor(e.target.value)}
-                  className="w-full px-3 py-2.5 text-sm rounded-xl border border-[#D1EAE4] bg-white text-[#0F2922] focus:outline-none focus:border-[#0D9488]"
+                  value={selectedService}
+                  onChange={(e) => handleServiceChange(e.target.value)}
+                  className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#CFE2DA] bg-white text-[#122B24] focus:outline-none focus:border-[#0D9488]"
                 >
-                  <option value="Дежурный специалист клиники">Дежурный врач</option>
-                  {doctorsList.map((doc) => (
-                    <option key={doc.id} value={doc.name}>
-                      {doc.name}
+                  {allServiceOptions.map((service) => (
+                    <option key={service} value={service}>
+                      {service}
                     </option>
                   ))}
                 </select>
               </div>
 
+              {/* Информационная плашка закрепленного врача за направлением */}
+              <div className="rounded-xl bg-[#EEF5F1] border border-[#CFE2DA] px-3.5 py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-1.5 text-[#122B24]">
+                  <Stethoscope className="w-3.5 h-3.5 text-[#0D9488] shrink-0" />
+                  <span>
+                    Закрепленный врач направления:{' '}
+                    <strong className="text-[#0F766E]">{recommendedDoctorForService}</strong>
+                  </span>
+                </div>
+                {selectedDoctor !== recommendedDoctorForService && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDoctor(recommendedDoctorForService)}
+                    className="text-[11px] font-bold text-[#0D9488] hover:underline cursor-pointer"
+                  >
+                    Вернуть профильного врача
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Doctor Selection + Date Selection */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-semibold text-[#0F2922] mb-1.5">
+                <label className="block text-xs font-semibold text-[#122B24] mb-1.5">
+                  Лечащий врач (можно поменять)
+                </label>
+                <select
+                  value={selectedDoctor}
+                  onChange={(e) => setSelectedDoctor(e.target.value)}
+                  className="w-full px-3 py-2.5 text-xs sm:text-sm rounded-xl border border-[#CFE2DA] bg-white text-[#122B24] font-semibold focus:outline-none focus:border-[#0D9488]"
+                >
+                  <option value="Дежурный специалист клиники">
+                    Дежурный специалист клиники (Бригада №{doctorShiftInfo.dutyBrigade})
+                  </option>
+                  {doctorsList.map((doc) => {
+                    const st = getDoctorShiftForDate(doc, preferredDate, shiftConfig);
+                    const shiftBadge =
+                      doc.shiftType === 'night' ? 'Ночь 20:00–10:00' : 'День 10:00–20:00';
+                    const statusText = st.isWorkingOnDate ? 'На смене' : 'По брони (вых.)';
+                    return (
+                      <option key={doc.id} value={doc.name}>
+                        {doc.name} · Бр.{doc.brigade} ({shiftBadge} · {statusText})
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-[#122B24] mb-1.5">
                   Дата визита *
                 </label>
                 <div className="relative">
-                  <Calendar className="w-4 h-4 text-[#335249] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <Calendar className="w-4 h-4 text-[#35524A] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <input
                     type="date"
                     min={todayDate}
                     value={preferredDate}
                     onChange={(e) => setPreferredDate(e.target.value)}
-                    className="w-full pl-9 pr-3 py-2.5 text-sm rounded-xl border border-[#D1EAE4] bg-white text-[#0F2922] tabular-nums focus:outline-none focus:border-[#0D9488]"
+                    className="w-full pl-9 pr-3 py-2.5 text-sm rounded-xl border border-[#CFE2DA] bg-white text-[#122B24] tabular-nums focus:outline-none focus:border-[#0D9488]"
                     required
                   />
                 </div>
               </div>
+            </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-[#0F2922] mb-1.5">
-                  Удобное время
-                </label>
-                <div className="relative">
-                  <Clock className="w-4 h-4 text-[#335249] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                  <select
-                    value={preferredTime}
-                    onChange={(e) => setPreferredTime(e.target.value)}
-                    className="w-full pl-9 pr-3 py-2.5 text-sm rounded-xl border border-[#D1EAE4] bg-white text-[#0F2922] tabular-nums focus:outline-none focus:border-[#0D9488]"
+            {/* 7-Day Visual Shift Strip for the Selected Doctor */}
+            {selectedDoctorProfile && (
+              <div className="rounded-xl bg-[#EEF5F1] border border-[#CFE2DA] p-3 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <div className="flex items-center gap-1.5 font-bold text-[#122B24]">
+                    {selectedDoctorProfile.shiftType === 'day' ? (
+                      <Sun className="w-3.5 h-3.5 text-amber-600" />
+                    ) : (
+                      <Moon className="w-3.5 h-3.5 text-indigo-600" />
+                    )}
+                    <span>
+                      График 2/2 врача ({selectedDoctorProfile.name.split(' ')[0]} · Бригада №
+                      {selectedDoctorProfile.brigade} · Смена {selectedDoctorProfile.shiftHours}):
+                    </span>
+                  </div>
+                  <span
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      doctorShiftInfo.isWorkingOnDate
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : 'bg-amber-100 text-amber-900'
+                    }`}
                   >
-                    {TIME_SLOTS.map((t) => {
-                      const isOccupied = occupiedSlotsForDoctorAndDate.has(t);
-                      return (
-                        <option key={t} value={t} disabled={isOccupied}>
-                          {isOccupied ? `${t} — Занято` : t}
-                        </option>
-                      );
-                    })}
-                  </select>
+                    {doctorShiftInfo.isWorkingOnDate
+                      ? `На смене (${doctorShiftInfo.shiftHours})`
+                      : 'Выходной по графику 2/2 (доступна запись по брони)'}
+                  </span>
                 </div>
+
+                <div className="grid grid-cols-7 gap-1.5">
+                  {doctor7DaySchedule.map((day) => {
+                    const isSelectedDate = day.iso === preferredDate;
+                    return (
+                      <button
+                        key={day.iso}
+                        type="button"
+                        onClick={() => setPreferredDate(day.iso)}
+                        className={`p-1.5 rounded-lg border text-center transition-all cursor-pointer ${
+                          isSelectedDate
+                            ? 'bg-[#0F2922] text-white border-[#0F2922] shadow-xs'
+                            : day.isWorking
+                            ? 'bg-white border-emerald-300 text-[#122B24] hover:bg-emerald-50'
+                            : 'bg-[#FCFBF7] border-amber-200 text-[#35524A] hover:bg-amber-50/60'
+                        }`}
+                      >
+                        <div className="text-[10px] font-bold truncate">{day.dayLabel}</div>
+                        <div
+                          className={`text-[9px] font-extrabold mt-0.5 rounded px-1 py-0.5 ${
+                            isSelectedDate
+                              ? 'bg-white/15 text-[#5EEAD4]'
+                              : day.isWorking
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-amber-100/80 text-amber-800'
+                          }`}
+                        >
+                          {day.isWorking
+                            ? day.shiftType === 'day'
+                              ? '10–20'
+                              : '20–10'
+                            : 'Бронь'}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Off-Day Advance Booking Banner ("По брони") */}
+            {isBookingOnDoctorOffDay && selectedDoctorProfile && (
+              <div className="rounded-xl bg-amber-50 border border-amber-300 p-3.5 space-y-2 text-xs text-amber-950">
+                <div className="flex items-start gap-2">
+                  <BookmarkCheck className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-bold">
+                      На {preferredDate} у врача «{selectedDoctorProfile.name}» выходной по графику 2/2
+                    </div>
+                    <p className="text-[11px] text-amber-900 mt-0.5 leading-relaxed">
+                      Вы можете оформить <strong>предварительную запись по брони</strong> на этот день (регистратор согласует резерв), либо в 1 клик выбрать ближайшую рабочую смену этого врача:
+                    </p>
+                  </div>
+                </div>
+                {nextWorkingDates.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                    <span className="text-[11px] font-semibold text-amber-900">
+                      Ближайшие рабочие смены ({selectedDoctorProfile.shiftHours}):
+                    </span>
+                    {nextWorkingDates.map((wDate) => (
+                      <button
+                        key={wDate}
+                        type="button"
+                        onClick={() => setPreferredDate(wDate)}
+                        className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold tabular-nums cursor-pointer transition-snappy"
+                      >
+                        Переключить на {wDate}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Individual Doctor Time Slots Grid & Select */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <label className="block text-xs font-semibold text-[#122B24]">
+                  Индивидуальное время врача ({doctorShiftInfo.shiftHours}) *
+                </label>
+                <span className="text-[11px] text-[#35524A]">
+                  Забронированные часы подписаны как «Занято»
+                </span>
+              </div>
+
+              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                {activeTimeSlots.map((slot) => {
+                  const isOccupied = occupiedSlotsForDoctorAndDate.has(slot);
+                  const isSelected = preferredTime === slot && !isOccupied;
+                  return (
+                    <button
+                      key={slot}
+                      type="button"
+                      disabled={isOccupied}
+                      onClick={() => setPreferredTime(slot)}
+                      className={`py-2 px-2.5 rounded-xl border text-xs font-bold tabular-nums transition-all ${
+                        isOccupied
+                          ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed line-through'
+                          : isSelected
+                          ? 'bg-[#0D9488] border-[#0D9488] text-white shadow-xs cursor-pointer'
+                          : 'bg-white border-[#CFE2DA] text-[#122B24] hover:border-[#0D9488] hover:bg-[#EEF5F1] cursor-pointer'
+                      }`}
+                    >
+                      <div className="flex items-center justify-center gap-1">
+                        <Clock className="w-3 h-3 shrink-0" />
+                        <span>{slot}</span>
+                      </div>
+                      <div
+                        className={`text-[10px] font-semibold mt-0.5 ${
+                          isOccupied
+                            ? 'text-red-500 no-underline'
+                            : isSelected
+                            ? 'text-white/90'
+                            : 'text-[#0F766E]'
+                        }`}
+                      >
+                        {isOccupied
+                          ? 'Занято'
+                          : isBookingOnDoctorOffDay
+                          ? 'По брони'
+                          : 'Свободно'}
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
             {petSpecies === 'Грызун' &&
               !selectedDoctor.toLowerCase().includes('соколов') && (
-                <div className="rounded-xl bg-[#E6F4F1] border border-[#0D9488]/40 px-3.5 py-2 flex items-center justify-between gap-2 text-xs text-[#0F2922]">
+                <div className="rounded-xl bg-[#E6F4F1] border border-[#0D9488]/40 px-3.5 py-2 flex items-center justify-between gap-2 text-xs text-[#122B24]">
                   <span>
                     Для кроликов и грызунов рекомендуем профильного ратолога —{' '}
                     <strong>Соколову Анну Павловну</strong>
@@ -658,29 +920,29 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               <div className="rounded-xl bg-amber-50 border border-amber-200 px-3.5 py-2 flex items-center gap-2 text-xs text-amber-900">
                 <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
                 <span>
-                  Защита расписания: у специалиста <strong>{selectedDoctor}</strong> на{' '}
+                  У специалиста <strong>{selectedDoctor}</strong> на{' '}
                   <span className="tabular-nums font-semibold">{preferredDate}</span> уже заняты часы:{' '}
                   <strong className="tabular-nums">
                     {Array.from(occupiedSlotsForDoctorAndDate).join(', ')}
                   </strong>
-                  . Доступны только свободные окна.
+                  . Они помечены как «Занято» и недоступны для выбора.
                 </span>
               </div>
             )}
 
             {/* Live Preparation Guide Preview inside Form */}
-            <div className="rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] p-3.5 space-y-1">
-              <div className="flex items-center gap-1.5 text-xs font-bold text-[#0F2922]">
+            <div className="rounded-xl bg-[#EEF5F1] border border-[#CFE2DA] p-3.5 space-y-1">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-[#122B24]">
                 <ClipboardCheck className="w-3.5 h-3.5 text-[#0D9488] shrink-0" />
                 <span>Как подготовить питомца ({preparationGuide.categoryTitle}):</span>
               </div>
-              <p className="text-[11px] text-[#335249] leading-relaxed">
+              <p className="text-[11px] text-[#35524A] leading-relaxed">
                 {preparationGuide.items[0]} Полная памятка будет прикреплена к вашему именному талону.
               </p>
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-[#0F2922] mb-1.5">
+              <label className="block text-xs font-semibold text-[#122B24] mb-1.5">
                 Комментарий к записи (необязательно)
               </label>
               <input
@@ -688,7 +950,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 placeholder="Возраст, симптомы или пожелания по приему"
-                className="w-full px-3.5 py-2 text-sm rounded-xl border border-[#D1EAE4] bg-white text-[#0F2922] focus:outline-none focus:border-[#0D9488]"
+                className="w-full px-3.5 py-2 text-sm rounded-xl border border-[#CFE2DA] bg-white text-[#122B24] focus:outline-none focus:border-[#0D9488]"
               />
             </div>
 
@@ -697,11 +959,15 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 type="submit"
                 className="w-full py-3.5 px-6 rounded-xl bg-[#F97316] hover:bg-[#EA580C] text-white font-semibold text-sm shadow-md transition-snappy whitespace-nowrap cursor-pointer"
               >
-                Подтвердить запись на прием
+                {isBookingOnDoctorOffDay
+                  ? `Оформить запись по брони (${preferredDate} в ${preferredTime})`
+                  : `Подтвердить запись на прием (${preferredDate} в ${preferredTime})`}
               </button>
-              <div className="flex items-center justify-center gap-2 mt-3 text-xs text-[#335249]">
+              <div className="flex items-center justify-center gap-2 mt-3 text-xs text-[#35524A]">
                 <ShieldCheck className="w-4 h-4 text-[#0D9488] shrink-0" />
-                <span>Мгновенное оформление без лишних кодов · Именной талон формируется сразу</span>
+                <span>
+                  Индивидуальное расписание врача · Защита от двойной записи · Именной талон сразу
+                </span>
               </div>
             </div>
           </form>

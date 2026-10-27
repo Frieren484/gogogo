@@ -11,6 +11,7 @@ export interface ServiceItem {
   description: string;
   included: string[];
   featured?: boolean;
+  defaultDoctorName?: string;
 }
 
 export type PetType = 'cat' | 'dog' | 'rodent';
@@ -23,10 +24,15 @@ export interface CalculatorPackage {
   basePrice: number;
   duration: string;
   includes: string[];
+  defaultDoctorName: string;
 }
+
+export type DoctorShiftType = 'day' | 'night';
+export type DoctorBrigade = 1 | 2;
 
 export interface DoctorProfile {
   id: string;
+  login?: string;
   name: string;
   role: string;
   experienceYears: number;
@@ -37,7 +43,43 @@ export interface DoctorProfile {
   photoUrl: string;
   fallbackTitle: string;
   accentColor: string;
+  brigade: DoctorBrigade;
+  shiftType: DoctorShiftType;
+  shiftHours: string;
+  personalSlots: string[];
+  assignedDirections?: string[];
 }
+
+export type DoctorItem = DoctorProfile;
+
+export const DUTY_DOCTOR_FALLBACK_SLOTS: string[] = [
+  '10:00',
+  '11:30',
+  '13:00',
+  '15:00',
+  '17:00',
+  '19:00',
+  '21:00',
+  '23:00',
+];
+
+export interface ShiftScheduleConfig {
+  anchorDate: string; // YYYY-MM-DD start of 2/2 cycle
+  phaseOffset: 0 | 1 | 2 | 3; // allows shifting the 2/2 cycle or switching today's duty brigade
+  rotationMode: '2x2' | '2_2' | 'daily'; // '2x2' / '2_2' = 2 days Brigade 1, 2 days Brigade 2; 'daily' = alternates every day
+  cycleMode?: '2x2' | '2_2' | 'daily';
+  dateBrigadeOverrides: Record<string, DoctorBrigade>; // explicit Admin override for specific YYYY-MM-DD dates
+  manualOverrides?: Record<string, DoctorBrigade>;
+}
+
+export const DEFAULT_SHIFT_SCHEDULE_CONFIG: ShiftScheduleConfig = {
+  anchorDate: new Date().toISOString().split('T')[0],
+  phaseOffset: 0,
+  rotationMode: '2x2',
+  cycleMode: '2x2',
+  dateBrigadeOverrides: {},
+  manualOverrides: {},
+};
 
 export interface TestimonialItem {
   id: string;
@@ -81,6 +123,7 @@ export interface AppointmentRecord {
   preferredDate: string;
   estimatedPrice: number;
   isEmergency?: boolean;
+  isAdvanceBooking?: boolean;
   status: string;
   notes?: string;
   ownerUid?: string;
@@ -94,7 +137,7 @@ export const CLINIC_INFO = {
   phoneDisplay: '+7 (495) 128-24-07',
   phoneRaw: '+74951282407',
   emergencyDispatchMinutes: 30,
-  schedule: 'Круглосуточно 24/7, без выходных и праздников',
+  schedule: 'Круглосуточно 24/7 · Смены 10:00–20:00 и 20:00–10:00 (график 2/2)',
   licenseNumber: 'Лицензия Департамента ветеринарии № ЛО-77-01-021849',
   heroPhotoUrl:
     'https://images.unsplash.com/photo-1628009368231-7bb7cfcb0def?auto=format&fit=crop&w=1400&q=85',
@@ -117,6 +160,7 @@ export const SERVICES_DATA: ServiceItem[] = [
       'Назначение схемы лечения без лишних препаратов',
     ],
     featured: true,
+    defaultDoctorName: 'Волкова Елена Сергеевна',
   },
   {
     id: 'ultrasound-lab',
@@ -134,6 +178,7 @@ export const SERVICES_DATA: ServiceItem[] = [
       'Печатный протокол с расшифровкой врача',
     ],
     featured: true,
+    defaultDoctorName: 'Морозов Дмитрий Игоревич',
   },
   {
     id: 'surgery',
@@ -150,6 +195,7 @@ export const SERVICES_DATA: ServiceItem[] = [
       'Внутрикожные косметические швы без попон',
       'Пробуждение в теплом кислородном боксе',
     ],
+    defaultDoctorName: 'Смирнов Алексей Викторович',
   },
   {
     id: 'vaccination',
@@ -166,6 +212,7 @@ export const SERVICES_DATA: ServiceItem[] = [
       'Введение вакцины с контролем переносимости',
       'Оформление международного паспорта и чипа',
     ],
+    defaultDoctorName: 'Павлова Ирина Николаевна',
   },
   {
     id: 'dentistry',
@@ -182,6 +229,7 @@ export const SERVICES_DATA: ServiceItem[] = [
       'Шлифовка и реминерализация эмали',
       'Рекомендации по домашней гигиене полости рта',
     ],
+    defaultDoctorName: 'Соколова Анна Павловна',
   },
   {
     id: 'cardiology',
@@ -198,6 +246,7 @@ export const SERVICES_DATA: ServiceItem[] = [
       'Шестиканальная ЭКГ и тонометрия',
       'Допуск к анестезии и расчет рисков',
     ],
+    defaultDoctorName: 'Волкова Елена Сергеевна',
   },
   {
     id: 'grooming',
@@ -214,6 +263,7 @@ export const SERVICES_DATA: ServiceItem[] = [
       'Стрижка когтей, обработка ушей и глаз',
       'Вычесывание подшерстка и бережная стрижка',
     ],
+    defaultDoctorName: 'Новикова Ольга Дмитриевна',
   },
   {
     id: 'icu',
@@ -230,6 +280,7 @@ export const SERVICES_DATA: ServiceItem[] = [
       'Инфузионная терапия и контроль показателей каждые 2 ч',
       'Видео- и фотоотчеты владельцу в мессенджер',
     ],
+    defaultDoctorName: 'Кузнецов Артём Романович',
   },
 ];
 
@@ -262,19 +313,22 @@ export const PET_AGE_CONFIG: Record<
     label: 'До 1 года',
     subtitle: 'Котята, щенки, молодые зверьки',
     multiplier: 0.9,
-    recommendation: 'Фокус на графике первичных прививок, контроле роста и обработке от паразитов.',
+    recommendation:
+      'Фокус на графике первичных прививок, контроле роста и обработке от паразитов.',
   },
   adult: {
     label: '1–7 лет',
     subtitle: 'Активный взрослый возраст',
     multiplier: 1.0,
-    recommendation: 'Оптимален ежегодный профилактический скрининг крови и УЗИ для раннего выявления скрытых патологий.',
+    recommendation:
+      'Оптимален ежегодный профилактический скрининг крови и УЗИ для раннего выявления скрытых патологий.',
   },
   senior: {
     label: 'Старше 7 лет',
     subtitle: 'Почтенный возраст (гериатрия)',
     multiplier: 1.2,
-    recommendation: 'Включает расширенный почечный и кардиологический контроль, тонометрию и оценку суставов.',
+    recommendation:
+      'Включает расширенный почечный и кардиологический контроль, тонометрию и оценку суставов.',
   },
 };
 
@@ -285,6 +339,7 @@ export const CALCULATOR_PACKAGES: CalculatorPackage[] = [
     subtitle: 'Полная проверка организма за 1 визит (экономия 25% от прайса)',
     basePrice: 4400,
     duration: '60 минут',
+    defaultDoctorName: 'Волкова Елена Сергеевна',
     includes: [
       'Прием ведущего терапевта (или ратолога для грызунов)',
       'Обзорное УЗИ органов брюшной полости',
@@ -298,6 +353,7 @@ export const CALCULATOR_PACKAGES: CalculatorPackage[] = [
     subtitle: 'Импортная/сертифицированная вакцина + осмотр врача',
     basePrice: 2500,
     duration: '30 минут',
+    defaultDoctorName: 'Павлова Ирина Николаевна',
     includes: [
       'Полный клинический осмотр и термометрия перед прививкой',
       'Комплексная вакцина против вирусных инфекций и бешенства',
@@ -310,6 +366,7 @@ export const CALCULATOR_PACKAGES: CalculatorPackage[] = [
     subtitle: 'Безопасный допуск к анестезии, стерилизации или чистке зубов',
     basePrice: 3800,
     duration: '45 минут',
+    defaultDoctorName: 'Кузнецов Артём Романович',
     includes: [
       'Консультация анестезиолога и оценка степени риска ASA',
       'Эхокардиография сердца (ЭхоКГ) на аппарате экспертного класса',
@@ -322,6 +379,7 @@ export const CALCULATOR_PACKAGES: CalculatorPackage[] = [
     subtitle: 'Ультразвуковая чистка или коррекция дентальной аркады',
     basePrice: 4600,
     duration: '60 минут',
+    defaultDoctorName: 'Соколова Анна Павловна',
     includes: [
       'Осмотр стоматолога и оценка состояния десен и прикуса',
       'Бережное снятие налета и зубного камня (для грызунов — коррекция резцов/щечных зубов)',
@@ -334,6 +392,7 @@ export const CALCULATOR_PACKAGES: CalculatorPackage[] = [
     subtitle: 'Деликатный уход без стресса под контролем дерматолога',
     basePrice: 2800,
     duration: '75 минут',
+    defaultDoctorName: 'Новикова Ольга Дмитриевна',
     includes: [
       'Осмотр кожи и шерсти дерматологом перед процедурой',
       'Бережное вычесывание, гигиена ушей, глаз и аккуратная стрижка когтей',
@@ -343,8 +402,10 @@ export const CALCULATOR_PACKAGES: CalculatorPackage[] = [
 ];
 
 export const DOCTORS_DATA: DoctorProfile[] = [
+  // БРИГАДА №1 (2 врача дневной смены 10:00–20:00, 2 врача ночной смены 20:00–10:00)
   {
     id: 'smirnov',
+    login: 'smirnov',
     name: 'Смирнов Алексей Викторович',
     role: 'Главный врач, хирург-ортопед, эндоскопист',
     experienceYears: 14,
@@ -357,9 +418,15 @@ export const DOCTORS_DATA: DoctorProfile[] = [
       'https://images.unsplash.com/photo-1612349317150-e413f6a5b16d?auto=format&fit=crop&w=800&q=80',
     fallbackTitle: 'А. В. Смирнов · Главврач, хирург',
     accentColor: '#0D9488',
+    brigade: 1,
+    shiftType: 'day',
+    shiftHours: '10:00–20:00',
+    personalSlots: ['10:00', '11:30', '13:00', '14:30', '16:00', '17:30', '19:00'],
+    assignedDirections: ['Эндоскопическая хирургия и ортопедия'],
   },
   {
     id: 'volkova',
+    login: 'volkova',
     name: 'Волкова Елена Сергеевна',
     role: 'Ведущий терапевт, ветеринарный кардиолог',
     experienceYears: 11,
@@ -372,9 +439,19 @@ export const DOCTORS_DATA: DoctorProfile[] = [
       'https://images.unsplash.com/photo-1594824476967-48c8b964273f?auto=format&fit=crop&w=800&q=80',
     fallbackTitle: 'Е. С. Волкова · Кардиолог, терапевт',
     accentColor: '#0F766E',
+    brigade: 1,
+    shiftType: 'day',
+    shiftHours: '10:00–20:00',
+    personalSlots: ['10:00', '11:00', '12:30', '14:00', '15:30', '17:00', '18:30'],
+    assignedDirections: [
+      'Терапия и первичный клинический прием',
+      'Кардиологический скрининг (ЭхоКГ + ЭКГ)',
+      'Комплексный чек-ап «Здоровый питомец»',
+    ],
   },
   {
     id: 'morozov',
+    login: 'morozov',
     name: 'Морозов Дмитрий Игоревич',
     role: 'Врач УЗ-диагностики, реаниматолог-анестезиолог',
     experienceYears: 9,
@@ -387,14 +464,21 @@ export const DOCTORS_DATA: DoctorProfile[] = [
       'https://images.unsplash.com/photo-1537368910025-700350fe46c7?auto=format&fit=crop&w=800&q=80',
     fallbackTitle: 'Д. И. Морозов · УЗИ и реанимация',
     accentColor: '#115E59',
+    brigade: 1,
+    shiftType: 'night',
+    shiftHours: '20:00–10:00',
+    personalSlots: ['20:00', '21:30', '23:00', '01:00', '03:00', '05:00', '07:00', '08:30'],
+    assignedDirections: ['УЗИ экспертного класса и экспресс-анализы', 'Экстренный триаж 24/7'],
   },
   {
     id: 'sokolova',
+    login: 'sokolova',
     name: 'Соколова Анна Павловна',
     role: 'Врач-ратолог (специалист по грызунам), стоматолог',
     experienceYears: 8,
     operationsCount: '2 900+ мелких пациентов',
-    education: 'МГАВМиБ им. К. И. Скрябина, узкая специализация по медицине грызунов и зайцеобразных',
+    education:
+      'МГАВМиБ им. К. И. Скрябина, узкая специализация по медицине грызунов и зайцеобразных',
     quote:
       'Кролики, морские свинки и шиншиллы требуют совершенно иной фармакологии и ювелирной стоматологии. У нас для них оборудован отдельный тихий кабинет без запаха хищников.',
     specialties: ['Медицина кроликов и грызунов', 'Дентальная коррекция', 'Микрохирургия'],
@@ -402,8 +486,284 @@ export const DOCTORS_DATA: DoctorProfile[] = [
       'https://images.unsplash.com/photo-1559839734-2b71ea197ec2?auto=format&fit=crop&w=800&q=80',
     fallbackTitle: 'А. П. Соколова · Ратолог, стоматолог',
     accentColor: '#0D9488',
+    brigade: 1,
+    shiftType: 'night',
+    shiftHours: '20:00–10:00',
+    personalSlots: ['20:00', '21:00', '22:30', '00:00', '02:00', '04:00', '06:30', '08:30'],
+    assignedDirections: [
+      'Ультразвуковая стоматология и санация',
+      'Стоматологическая санация и защита эмали',
+    ],
+  },
+
+  // БРИГАДА №2 (4 новых специалиста: 2 врача дневной смены 10:00–20:00, 2 врача ночной смены 20:00–10:00)
+  {
+    id: 'vasiliev',
+    login: 'vasiliev',
+    name: 'Васильев Михаил Юрьевич',
+    role: 'Ведущий хирург-травматолог, нейрохирург',
+    experienceYears: 12,
+    operationsCount: '2 850+ операций',
+    education: 'МГАВМиБ им. К. И. Скрябина, стажировка по ортопедии AOVET (Германия)',
+    quote:
+      'Современная травматология позволяет поднять на лапы пациента даже после сложнейших переломов. Мы используем титановые пластины и малоинвазивный остеосинтез.',
+    specialties: ['Остеосинтез AOVET', 'Нейрохирургия позвоночника', 'Артроскопия суставов'],
+    photoUrl:
+      'https://images.unsplash.com/photo-1622253692010-333f2da6031d?auto=format&fit=crop&w=800&q=80',
+    fallbackTitle: 'М. Ю. Васильев · Травматолог, хирург',
+    accentColor: '#0D9488',
+    brigade: 2,
+    shiftType: 'day',
+    shiftHours: '10:00–20:00',
+    personalSlots: ['10:00', '11:30', '13:00', '15:00', '16:30', '18:00', '19:15'],
+    assignedDirections: ['Травматология и ортопедия (Бригада №2)'],
+  },
+  {
+    id: 'pavlova',
+    login: 'pavlova',
+    name: 'Павлова Ирина Николаевна',
+    role: 'Врач-терапевт, эндокринолог, иммунолог',
+    experienceYears: 10,
+    operationsCount: '5 400+ приемов',
+    education: 'СПбГУВМ, Европейская школа ветеринарной эндокринологии ESVE',
+    quote:
+      'Грамотная вакцинация и ранняя диагностика гормональных нарушений продлевают активную жизнь питомца на годы. Главное — индивидуальный подход к каждой породе.',
+    specialties: ['Вакцинопрофилактика', 'Эндокринология и диабет', 'Гастроэнтерология'],
+    photoUrl:
+      'https://images.unsplash.com/photo-1527613426441-4da17471b66d?auto=format&fit=crop&w=800&q=80',
+    fallbackTitle: 'И. Н. Павлова · Терапевт, эндокринолог',
+    accentColor: '#0F766E',
+    brigade: 2,
+    shiftType: 'day',
+    shiftHours: '10:00–20:00',
+    personalSlots: ['10:30', '12:00', '13:30', '15:00', '16:30', '18:00', '19:00'],
+    assignedDirections: [
+      'Комплексная вакцинация и чипирование',
+      'Ежегодная вакцинация «Под ключ» с паспортом',
+    ],
+  },
+  {
+    id: 'kuznetsov',
+    login: 'kuznetsov',
+    name: 'Кузнецов Артём Романович',
+    role: 'Заведующий ОРИТ, анестезиолог-реаниматолог',
+    experienceYears: 9,
+    operationsCount: '4 200+ анестезий и реанимаций',
+    education: 'РГАУ-МСХА им. К. А. Тимирязева, сертификация RECOVER по сердечно-легочной реанимации',
+    quote:
+      'Ночной стационар и реанимация — это место, где мониторинг не прекращается ни на секунду. Мы контролируем дыхание, давление и боль у каждого тяжелого пациента 24/7.',
+    specialties: ['Круглосуточный стационар ОРИТ', 'Оксигенотерапия', 'Кардиоанестезия'],
+    photoUrl:
+      'https://images.unsplash.com/photo-1582750433449-648ed127bb54?auto=format&fit=crop&w=800&q=80',
+    fallbackTitle: 'А. Р. Кузнецов · Реаниматолог ОРИТ',
+    accentColor: '#115E59',
+    brigade: 2,
+    shiftType: 'night',
+    shiftHours: '20:00–10:00',
+    personalSlots: ['20:00', '21:30', '23:00', '00:30', '02:30', '04:30', '06:30', '08:30'],
+    assignedDirections: [
+      'Интенсивный стационар и оксигенотерапия 24/7',
+      'Предоперационный кардио- и лабораторный скрининг',
+    ],
+  },
+  {
+    id: 'novikova',
+    login: 'novikova',
+    name: 'Новикова Ольга Дмитриевна',
+    role: 'Врач-дерматолог, аллерголог, специалист по уходу',
+    experienceYears: 7,
+    operationsCount: '3 100+ дерматологических пациентов',
+    education: 'МГАВМиБ им. К. И. Скрябина, член Европейского общества вет. дерматологии ESVD',
+    quote:
+      'Здоровая кожа и шерсть — зеркало иммунитета. Мы проводим цитологию прямо на приеме и подбираем бережный медицинский уход без гормонов там, где можно обойтись деликатной терапией.',
+    specialties: ['Цитология кожи и отиты', 'Аллергология', 'Медицинский груминг без стресса'],
+    photoUrl:
+      'https://images.unsplash.com/photo-1651008376811-b90baee60c1f?auto=format&fit=crop&w=800&q=80',
+    fallbackTitle: 'О. Д. Новикова · Дерматолог, аллерголог',
+    accentColor: '#0D9488',
+    brigade: 2,
+    shiftType: 'night',
+    shiftHours: '20:00–10:00',
+    personalSlots: ['20:30', '22:00', '23:30', '01:30', '03:30', '05:30', '07:30', '09:00'],
+    assignedDirections: [
+      'Бережный медицинский груминг и гигиена',
+      'Медицинский гигиенический груминг-комплекс',
+    ],
   },
 ];
+
+/**
+ * Вычисляет разницу в календарных днях между двумя датами YYYY-MM-DD
+ */
+export function diffDaysBetweenDates(anchorDateStr: string, targetDateStr: string): number {
+  const [ay, am, ad] = anchorDateStr.split('-').map(Number);
+  const [ty, tm, td] = targetDateStr.split('-').map(Number);
+  if (!ay || !am || !ad || !ty || !tm || !td) return 0;
+  const utcAnchor = Date.UTC(ay, am - 1, ad);
+  const utcTarget = Date.UTC(ty, tm - 1, td);
+  return Math.round((utcTarget - utcAnchor) / 86400000);
+}
+
+/**
+ * Определяет, какая дежурная бригада (1 или 2) работает в указанную дату YYYY-MM-DD.
+ * По умолчанию используется график 2 через 2 (2 дня Бригада №1, 2 дня Бригада №2),
+ * либо посуточное чередование, плюс учитываются ручные переопределения администратора.
+ */
+export function getDutyBrigadeForDate(
+  dateStr: string,
+  config: ShiftScheduleConfig = DEFAULT_SHIFT_SCHEDULE_CONFIG
+): DoctorBrigade {
+  if (!dateStr) return 1;
+  const override =
+    config.dateBrigadeOverrides?.[dateStr] ?? config.manualOverrides?.[dateStr];
+  if (override === 1 || override === 2) {
+    return override;
+  }
+
+  const diff = diffDaysBetweenDates(config.anchorDate || '2026-10-26', dateStr);
+  const mode = config.cycleMode || config.rotationMode || '2x2';
+  if (mode === 'daily') {
+    const mod2 = (((diff + (config.phaseOffset || 0)) % 2) + 2) % 2;
+    return mod2 === 0 ? 1 : 2;
+  }
+
+  // Стандартный график 2 через 2: дни 0, 1 -> Бригада 1; дни 2, 3 -> Бригада 2
+  const mod4 = (((diff + (config.phaseOffset || 0)) % 4) + 4) % 4;
+  return mod4 < 2 ? 1 : 2;
+}
+
+/**
+ * Возвращает статус смены конкретного врача на выбранную дату YYYY-MM-DD:
+ * - isWorkingOnDate / isWorking / isWorkingToday: true, если его бригада сегодня на дежурстве
+ * - shiftType: 'day' (10:00–20:00) или 'night' (20:00–10:00)
+ * - shiftHours: '10:00–20:00' или '20:00–10:00'
+ * - personalSlots: индивидуальные часы приема этого врача
+ */
+export function getDoctorShiftForDate(
+  doctor: DoctorProfile | undefined,
+  dateStr: string,
+  config: ShiftScheduleConfig = DEFAULT_SHIFT_SCHEDULE_CONFIG
+): {
+  isWorkingOnDate: boolean;
+  isWorking: boolean;
+  isWorkingToday: boolean;
+  statusText: string;
+  dutyBrigade: DoctorBrigade;
+  doctorBrigade: DoctorBrigade;
+  shiftType: DoctorShiftType;
+  shiftHours: string;
+  personalSlots: string[];
+} {
+  const dutyBrigade = getDutyBrigadeForDate(dateStr, config);
+  if (!doctor) {
+    return {
+      isWorkingOnDate: true,
+      isWorking: true,
+      isWorkingToday: true,
+      statusText: `Дежурит Бригада №${dutyBrigade} (круглосуточно 10:00–20:00 и 20:00–10:00)`,
+      dutyBrigade,
+      doctorBrigade: dutyBrigade,
+      shiftType: 'day',
+      shiftHours: '10:00–20:00 / 20:00–10:00',
+      personalSlots: DUTY_DOCTOR_FALLBACK_SLOTS,
+    };
+  }
+
+  const docBrigade: DoctorBrigade = doctor.brigade === 2 ? 2 : 1;
+  const shiftType: DoctorShiftType = doctor.shiftType === 'night' ? 'night' : 'day';
+  const shiftHours =
+    doctor.shiftHours || (shiftType === 'day' ? '10:00–20:00' : '20:00–10:00');
+  const personalSlots =
+    Array.isArray(doctor.personalSlots) && doctor.personalSlots.length > 0
+      ? doctor.personalSlots
+      : shiftType === 'day'
+      ? ['10:00', '11:30', '13:00', '15:00', '16:30', '18:00', '19:00']
+      : ['20:00', '21:30', '23:00', '01:00', '03:00', '06:00', '08:30'];
+
+  const isWorking = docBrigade === dutyBrigade;
+  const statusText = isWorking
+    ? `На смене (${shiftType === 'night' ? 'ночная' : 'дневная'} ${shiftHours})`
+    : `Выходной по графику 2/2 · запись по предварительной брони (${shiftHours})`;
+
+  return {
+    isWorkingOnDate: isWorking,
+    isWorking,
+    isWorkingToday: isWorking,
+    statusText,
+    dutyBrigade,
+    doctorBrigade: docBrigade,
+    shiftType,
+    shiftHours,
+    personalSlots,
+  };
+}
+
+/**
+ * Возвращает список ближайших рабочих дат (YYYY-MM-DD) для выбранного врача по графику 2/2
+ */
+export function getNextWorkingDatesForDoctor(
+  doctor: DoctorProfile | undefined,
+  fromDateStr: string,
+  count = 4,
+  config: ShiftScheduleConfig = DEFAULT_SHIFT_SCHEDULE_CONFIG
+): string[] {
+  const result: string[] = [];
+  const baseDate = fromDateStr ? new Date(`${fromDateStr}T00:00:00`) : new Date();
+  for (let i = 0; i < 21 && result.length < count; i++) {
+    const d = new Date(baseDate.getTime() + i * 86400000);
+    const iso = d.toISOString().split('T')[0];
+    const status = getDoctorShiftForDate(doctor, iso, config);
+    if (status.isWorkingOnDate) {
+      result.push(iso);
+    }
+  }
+  return result;
+}
+
+/**
+ * Определяет закрепленного профильного врача для выбранной услуги или программы чек-апа
+ */
+export function resolveDefaultDoctorForService(
+  serviceTitle: string,
+  servicesList: ServiceItem[] = SERVICES_DATA,
+  doctorsList: DoctorProfile[] = DOCTORS_DATA
+): string {
+  const clean = (serviceTitle || '').trim().toLowerCase();
+  if (!clean) return doctorsList[0]?.name || 'Волкова Елена Сергеевна';
+
+  // 1. Точное или частичное совпадение с услугой из прайс-листа
+  const matchedService =
+    servicesList.find((s) => s.title.trim().toLowerCase() === clean) ||
+    servicesList.find(
+      (s) =>
+        clean.includes(s.title.trim().toLowerCase()) ||
+        s.title.trim().toLowerCase().includes(clean)
+    );
+
+  if (matchedService?.defaultDoctorName) {
+    const exists = doctorsList.some((d) => d.name === matchedService.defaultDoctorName);
+    if (exists) return matchedService.defaultDoctorName;
+  }
+
+  // 2. Совпадение с комплексной программой калькулятора
+  const matchedPkg = CALCULATOR_PACKAGES.find(
+    (p) =>
+      clean === p.title.toLowerCase() ||
+      clean.startsWith(p.title.toLowerCase()) ||
+      clean.includes(p.title.toLowerCase())
+  );
+  if (matchedPkg?.defaultDoctorName) {
+    const exists = doctorsList.some((d) => d.name === matchedPkg.defaultDoctorName);
+    if (exists) return matchedPkg.defaultDoctorName;
+  }
+
+  // 3. Экстренный выезд
+  if (clean.includes('экстренн') || clean.includes('триаж')) {
+    return 'Морозов Дмитрий Игоревич';
+  }
+
+  return doctorsList[0]?.name || 'Волкова Елена Сергеевна';
+}
 
 export type ReviewSpeciesFilter = 'all' | 'dogs' | 'cats' | 'exotic';
 
@@ -578,7 +938,7 @@ export const TESTIMONIALS_DATA: TestimonialItem[] = [
     rating: 5,
     beforeAfterOutcome: 'Устранение медиального вывиха коленной чашечки, бегает на всех 4 лапах',
     story:
-      'Тедди внезапно начал поджимать заднюю лапку на прогулке. Алексей Викторович провел ортопедические тесты и рентген — оказался вывих пателлы 3-й степени. Операция прошла блестяще: мультимодальное обезболивание сработало так мягко, что песик даже не скулил. Уже через три недели после операции Тедди уверенно опирается на лапу.',
+      'Тедди внезапно начал поджимать заднюю лапку на прогулке. Михаил Юрьевич Васильев и Алексей Викторович провели ортопедические тесты и рентген — оказался вывих пателлы 3-й степени. Операция прошла блестяще: мультимодальное обезболивание сработало так мягко, что песик даже не скулил. Уже через три недели после операции Тедди уверенно опирается на лапу.',
     photoUrl:
       'https://images.unsplash.com/photo-1543466835-00a7907e9de1?auto=format&fit=crop&w=600&q=80',
   },
@@ -608,7 +968,7 @@ export const TESTIMONIALS_DATA: TestimonialItem[] = [
     rating: 5,
     beforeAfterOutcome: 'Прибытие бригады за 24 минуты при остром отравлении и спасение жизни',
     story:
-      'На даче под Москвой Джекки укусила гадюка в морду — отек рос буквально на глазах, собака начала задыхаться. Вызвали экстренную бригаду «Лапы Помощи»: ветмобиль с реаниматологом приехал через 24 минуты! Прямо в машине поставили капельницу, ввели препараты и доставили в стационар под круглосуточный мониторинг. Вы спасли нашего члена семьи!',
+      'На даче под Москвой Джекки укусила гадюка в морду — отек рос буквально на глазах, собака начала задыхаться. Вызвали экстренную бригаду «Лапы Помощи»: ветмобиль с реаниматологом Артёмом Кузнецовым приехал через 24 минуты! Прямо в машине поставили капельницу, ввели препараты и доставили в стационар под круглосуточный мониторинг. Вы спасли нашего члена семьи!',
     photoUrl:
       'https://images.unsplash.com/photo-1517849845537-4d257902454a?auto=format&fit=crop&w=600&q=80',
   },
@@ -624,10 +984,10 @@ export const FAQ_DATA: FaqItem[] = [
   },
   {
     id: 'faq-2',
-    category: 'Стационар 24/7',
-    question: 'Есть ли в клинике круглосуточный стационар и можно ли навещать питомца?',
+    category: 'График 2/2 и Смены',
+    question: 'По какому графику работают врачи и можно ли записаться к врачу, у которого сегодня выходной?',
     answer:
-      'Да, в «Лапе Помощи» работает круглосуточный стационар интенсивной терапии с отдельными блоками для кошек, собак и мелких грызунов (без пересечения запахов и звуков). Каждый бокс оснащен подогревом пола, подачей кислорода и инфузоматами. Навещать питомца можно ежедневно с 11:00 до 21:00, а каждые 6 часов лечащий врач отправляет вам фото- и видеоотчет в мессенджер.',
+      'В клинике работают 8 профильных специалистов, распределенных на 2 дежурные бригады по графику 2 через 2. В каждой бригаде два врача ведут дневной прием с 10:00 до 20:00 и два врача — ночное дежурство с 20:00 до 10:00 утра. Если у нужного вам узкого специалиста в выбранный день выходной, вы можете оформить к нему предварительную запись по брони или одним нажатием выбрать его ближайшую рабочую смену.',
   },
   {
     id: 'faq-3',
@@ -789,8 +1149,6 @@ export function resolveAppointmentPrice(
 
   const rawPrice = Number(record.estimatedPrice);
   if (Number.isFinite(rawPrice) && rawPrice > 0) {
-    // Если услуга точно совпадает с базовой позицией прайса (не калькулятор с возрастным коэффициентом),
-    // возвращаем актуальную цену из прайс-листа, чтобы исключить расхождения
     const directService = servicesList.find(
       (s) =>
         s.title.trim().toLowerCase() ===
@@ -805,6 +1163,10 @@ export function resolveAppointmentPrice(
   return catalogPrice;
 }
 
+const TODAY_ISO = new Date().toISOString().split('T')[0];
+const TOMORROW_ISO = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+const DAY_AFTER_ISO = new Date(Date.now() + 2 * 86400000).toISOString().split('T')[0];
+
 export const INITIAL_APPOINTMENTS_DATA: AppointmentRecord[] = [
   {
     id: 'LP-849102',
@@ -815,7 +1177,7 @@ export const INITIAL_APPOINTMENTS_DATA: AppointmentRecord[] = [
     petName: 'Ричард',
     serviceTitle: 'Ежегодный комплексный чек-ап «Здоровый питомец»',
     doctorName: 'Волкова Елена Сергеевна',
-    preferredDate: '2026-10-19 в 11:00',
+    preferredDate: `${TODAY_ISO} в 11:00`,
     estimatedPrice: 5500,
     isEmergency: false,
     status: 'Подтверждена',
@@ -832,7 +1194,7 @@ export const INITIAL_APPOINTMENTS_DATA: AppointmentRecord[] = [
     petName: 'Марсель',
     serviceTitle: 'Кардиологический скрининг (ЭхоКГ + ЭКГ)',
     doctorName: 'Волкова Елена Сергеевна',
-    preferredDate: '2026-10-19 в 13:00',
+    preferredDate: `${TOMORROW_ISO} в 14:00`,
     estimatedPrice: 3100,
     isEmergency: false,
     status: 'Подтверждена',
@@ -847,7 +1209,7 @@ export const INITIAL_APPOINTMENTS_DATA: AppointmentRecord[] = [
     petName: 'Пончик',
     serviceTitle: 'Ультразвуковая стоматология и санация',
     doctorName: 'Соколова Анна Павловна',
-    preferredDate: '2026-10-19 в 15:00',
+    preferredDate: `${TOMORROW_ISO} в 21:00`,
     estimatedPrice: 4200,
     isEmergency: false,
     status: 'Новая',
@@ -862,7 +1224,7 @@ export const INITIAL_APPOINTMENTS_DATA: AppointmentRecord[] = [
     petName: 'Луна',
     serviceTitle: 'Эндоскопическая хирургия и ортопедия',
     doctorName: 'Смирнов Алексей Викторович',
-    preferredDate: '2026-10-18 в 17:00',
+    preferredDate: `${TODAY_ISO} в 13:00`,
     estimatedPrice: 6500,
     isEmergency: false,
     status: 'Завершена',
@@ -879,7 +1241,7 @@ export const INITIAL_APPOINTMENTS_DATA: AppointmentRecord[] = [
     petName: 'Барон',
     serviceTitle: 'Эндоскопическая хирургия и ортопедия',
     doctorName: 'Смирнов Алексей Викторович',
-    preferredDate: '2026-10-20 в 12:00',
+    preferredDate: `${TOMORROW_ISO} в 11:30`,
     estimatedPrice: 6500,
     isEmergency: false,
     status: 'Подтверждена',
@@ -894,7 +1256,7 @@ export const INITIAL_APPOINTMENTS_DATA: AppointmentRecord[] = [
     petName: 'Симба',
     serviceTitle: 'Экстренный выезд бригады на дом (за 30 минут)',
     doctorName: 'Морозов Дмитрий Игоревич',
-    preferredDate: '2026-10-19 в 19:00',
+    preferredDate: `${TODAY_ISO} в 21:30`,
     estimatedPrice: 3500,
     isEmergency: true,
     status: 'Новая',
@@ -909,11 +1271,11 @@ export const INITIAL_APPOINTMENTS_DATA: AppointmentRecord[] = [
     petName: 'Бруно',
     serviceTitle: 'Комплексная вакцинация и чипирование',
     doctorName: 'Дежурный специалист клиники',
-    preferredDate: '2026-10-20 в 11:00',
+    preferredDate: `${TOMORROW_ISO} в 12:00`,
     estimatedPrice: 2200,
     isEmergency: false,
-    status: 'Отменена',
-    notes: 'Владелец попросил перенести визит на следующую неделю из-за командировки.',
+    status: 'Новая',
+    notes: 'Плановая вакцинация и чипирование. Ожидает назначения дежурного врача.',
   },
   {
     id: 'LP-849412',
@@ -924,41 +1286,71 @@ export const INITIAL_APPOINTMENTS_DATA: AppointmentRecord[] = [
     petName: 'Рекс',
     serviceTitle: 'УЗИ экспертного класса и экспресс-анализы',
     doctorName: 'Морозов Дмитрий Игоревич',
-    preferredDate: '2026-10-20 в 13:00',
+    preferredDate: `${TOMORROW_ISO} в 20:00`,
     estimatedPrice: 2400,
     isEmergency: false,
     status: 'Подтверждена',
     notes: 'Немецкая овчарка, 5 лет. Контрольное УЗИ брюшной полости и биохимия крови.',
   },
   {
-    id: 'LP-849455',
-    createdAt: '19:40',
+    id: 'LP-849501',
+    createdAt: '19:30',
+    ownerName: 'Наталья Ветрова',
+    phone: '+7 (916) 509-12-44',
+    petSpecies: 'Собака',
+    petName: 'Тедди',
+    serviceTitle: 'Эндоскопическая хирургия и ортопедия',
+    doctorName: 'Васильев Михаил Юрьевич',
+    preferredDate: `${DAY_AFTER_ISO} в 11:30`,
+    estimatedPrice: 6500,
+    isEmergency: false,
+    status: 'Подтверждена',
+    notes: 'Померанский шпиц, контрольный осмотр у травматолога Бригады №2.',
+  },
+  {
+    id: 'LP-849518',
+    createdAt: '19:55',
     ownerName: 'Виктория Орлова',
     phone: '+7 (916) 774-59-03',
     petSpecies: 'Кошка',
     petName: 'Мята',
-    serviceTitle: 'Терапия и первичный клинический прием',
-    doctorName: 'Волкова Елена Сергеевна',
-    preferredDate: '2026-10-20 в 15:00',
-    estimatedPrice: 1800,
-    isEmergency: false,
-    status: 'Новая',
-    notes: 'Абиссинская кошка, 2 года. Профилактический осмотр перед дачным сезоном.',
-  },
-  {
-    id: 'LP-849489',
-    createdAt: '20:15',
-    ownerName: 'Павел Кузнецов',
-    phone: '+7 (905) 618-44-72',
-    petSpecies: 'Грызун',
-    petName: 'Шустрик',
     serviceTitle: 'Комплексная вакцинация и чипирование',
-    doctorName: 'Соколова Анна Павловна',
-    preferredDate: '2026-10-20 в 17:00',
+    doctorName: 'Павлова Ирина Николаевна',
+    preferredDate: `${DAY_AFTER_ISO} в 12:00`,
     estimatedPrice: 2200,
     isEmergency: false,
     status: 'Подтверждена',
-    notes: 'Декоративный кролик, 1 год. Плановая вакцинация и оформление паспорта.',
+    notes: 'Абиссинская кошка, 2 года. Ежегодная вакцинация с паспортом.',
+  },
+  {
+    id: 'LP-849534',
+    createdAt: '20:20',
+    ownerName: 'Сергей Воронцов',
+    phone: '+7 (985) 239-61-07',
+    petSpecies: 'Собака',
+    petName: 'Тайсон',
+    serviceTitle: 'Интенсивный стационар и оксигенотерапия 24/7',
+    doctorName: 'Кузнецов Артём Романович',
+    preferredDate: `${DAY_AFTER_ISO} в 21:30`,
+    estimatedPrice: 4800,
+    isEmergency: true,
+    status: 'Подтверждена',
+    notes: 'Лабрадор, 6 лет. Мониторинг в ночном стационаре ОРИТ Бригады №2.',
+  },
+  {
+    id: 'LP-849560',
+    createdAt: '20:45',
+    ownerName: 'Алина Дорофеева',
+    phone: '+7 (915) 840-29-51',
+    petSpecies: 'Кошка',
+    petName: 'Оливия',
+    serviceTitle: 'Бережный медицинский груминг и гигиена',
+    doctorName: 'Новикова Ольга Дмитриевна',
+    preferredDate: `${DAY_AFTER_ISO} в 20:30`,
+    estimatedPrice: 2600,
+    isEmergency: false,
+    status: 'Новая',
+    notes: 'Мейн-кун, 4 года. Медицинский груминг и осмотр кожи дерматологом.',
   },
 ];
 
@@ -1014,7 +1406,8 @@ const RANDOM_CLIENTS_POOL: Array<{
 ];
 
 /**
- * Генерирует новую реалистичную тестовую заявку от случайного клиента с синхронизированной ценой из прайса.
+ * Генерирует новую реалистичную тестовую заявку от случайного клиента с синхронизированной ценой из прайса
+ * и учетом индивидуальных слотов выбранного врача.
  */
 export function createRandomClientAppointment(
   servicesList: ServiceItem[] = SERVICES_DATA,
@@ -1024,14 +1417,25 @@ export function createRandomClientAppointment(
   const client = RANDOM_CLIENTS_POOL[indexSeed % RANDOM_CLIENTS_POOL.length];
   const service =
     servicesList[indexSeed % Math.max(1, servicesList.length)] || SERVICES_DATA[0];
+
+  const defaultDocName = resolveDefaultDoctorForService(
+    service.title,
+    servicesList,
+    doctorsList
+  );
   const doctor =
     client.petSpecies === 'Грызун'
       ? doctorsList.find((d) => d.name.includes('Соколова')) ||
         doctorsList[indexSeed % Math.max(1, doctorsList.length)] ||
         DOCTORS_DATA[0]
-      : doctorsList[indexSeed % Math.max(1, doctorsList.length)] || DOCTORS_DATA[0];
+      : doctorsList.find((d) => d.name === defaultDocName) ||
+        doctorsList[indexSeed % Math.max(1, doctorsList.length)] ||
+        DOCTORS_DATA[0];
 
-  const slots = ['09:00', '11:00', '13:00', '15:00', '17:00', '19:00', '21:00'];
+  const slots =
+    doctor.personalSlots && doctor.personalSlots.length > 0
+      ? doctor.personalSlots
+      : ['10:00', '11:30', '13:00', '15:00', '17:00', '19:00'];
   const slot = slots[indexSeed % slots.length];
   const futureDate = new Date(Date.now() + ((indexSeed % 5) + 1) * 86400000)
     .toISOString()

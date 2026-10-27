@@ -21,9 +21,15 @@ import {
 } from 'lucide-react';
 import {
   AppointmentRecord,
+  DEFAULT_SHIFT_SCHEDULE_CONFIG,
+  DoctorItem,
+  DOCTORS_DATA,
+  DUTY_DOCTOR_FALLBACK_SLOTS,
+  getDoctorShiftForDate,
   resolveAppointmentPrice,
   ServiceItem,
   SERVICES_DATA,
+  ShiftScheduleConfig,
 } from '../data/clinicData';
 import {
   AppUserProfile,
@@ -37,23 +43,14 @@ import {
   getPreparationAdvice,
 } from '../utils/appointmentVoucher';
 
-const RESCHEDULE_TIME_SLOTS = [
-  '09:00',
-  '11:00',
-  '13:00',
-  '15:00',
-  '17:00',
-  '19:00',
-  '21:00',
-  '00:00 (Ночной прием)',
-];
-
 interface SavedAppointmentsModalProps {
   isOpen: boolean;
   onClose: () => void;
   appointments: AppointmentRecord[];
   allAppointments?: AppointmentRecord[];
   servicesList?: ServiceItem[];
+  doctorsList?: DoctorItem[];
+  shiftConfig?: ShiftScheduleConfig;
   currentUser: AppUserProfile;
   onCancelAppointment: (id: string) => void;
   onRescheduleAppointment?: (id: string, newPreferredDate: string) => void;
@@ -71,6 +68,8 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
   appointments,
   allAppointments = [],
   servicesList = SERVICES_DATA,
+  doctorsList = DOCTORS_DATA,
+  shiftConfig = DEFAULT_SHIFT_SCHEDULE_CONFIG,
   currentUser,
   onCancelAppointment,
   onRescheduleAppointment,
@@ -188,14 +187,15 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
     }
   };
 
-  const startReschedule = (record: AppointmentRecord) => {
-    setRescheduleError('');
-    setReschedulingId(record.id);
-    const [existingDate, existingTime] = record.preferredDate.split(' в ').map((s) => s.trim());
-    setRescheduleDate(existingDate && existingDate >= todayDate ? existingDate : tomorrowDate);
-    setRescheduleTime(
-      existingTime && RESCHEDULE_TIME_SLOTS.includes(existingTime) ? existingTime : '11:00'
-    );
+  const getDoctorForRecord = (record: AppointmentRecord): DoctorItem | undefined => {
+    return doctorsList.find((d) => d.name === record.doctorName);
+  };
+
+  const getSlotsForRecord = (record: AppointmentRecord): string[] => {
+    const doc = getDoctorForRecord(record);
+    return doc?.personalSlots && doc.personalSlots.length > 0
+      ? doc.personalSlots
+      : DUTY_DOCTOR_FALLBACK_SLOTS;
   };
 
   const getOccupiedSlotsForReschedule = (record: AppointmentRecord, targetDate: string) => {
@@ -214,6 +214,22 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
       }
     });
     return busy;
+  };
+
+  const startReschedule = (record: AppointmentRecord) => {
+    setRescheduleError('');
+    setReschedulingId(record.id);
+    const [existingDate, existingTime] = record.preferredDate.split(' в ').map((s) => s.trim());
+    const targetDate = existingDate && existingDate >= todayDate ? existingDate : tomorrowDate;
+    setRescheduleDate(targetDate);
+    const docSlots = getSlotsForRecord(record);
+    const busy = getOccupiedSlotsForReschedule(record, targetDate);
+    if (existingTime && docSlots.includes(existingTime) && !busy.has(existingTime)) {
+      setRescheduleTime(existingTime);
+    } else {
+      const firstFree = docSlots.find((s) => !busy.has(s)) || docSlots[0] || '10:00';
+      setRescheduleTime(firstFree);
+    }
   };
 
   const handleConfirmReschedule = (record: AppointmentRecord) => {
@@ -243,8 +259,8 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
       aria-modal="true"
       aria-labelledby="saved-appointments-title"
     >
-      <div className="relative w-full max-w-2xl rounded-2xl bg-white border border-[#D1EAE4] shadow-2xl overflow-hidden my-8">
-        <div className="flex items-center justify-between px-6 py-5 bg-[#F4FAF8] border-b border-[#D1EAE4]">
+      <div className="relative w-full max-w-2xl rounded-2xl bg-[#FCFBF7] border border-[#CFE2DA] shadow-2xl overflow-hidden my-8">
+        <div className="flex items-center justify-between px-6 py-5 bg-[#EAF2EE] border-b border-[#CFE2DA]">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-[#0D9488] flex items-center justify-center text-white shrink-0">
               <CalendarCheck2 className="w-5 h-5" />
@@ -657,7 +673,7 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-xs font-bold text-[#0F2922] flex items-center gap-1.5">
                             <Calendar className="w-3.5 h-3.5 text-[#0D9488]" />
-                            Выберите новую дату и свободное время ({item.doctorName})
+                            Выберите новую дату и индивидуальное окно врача ({item.doctorName})
                           </span>
                           <button
                             type="button"
@@ -667,6 +683,25 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
                             Закрыть
                           </button>
                         </div>
+
+                        {(() => {
+                          const doc = getDoctorForRecord(item);
+                          if (!doc) return null;
+                          const shiftInfo = getDoctorShiftForDate(doc, rescheduleDate, shiftConfig);
+                          return (
+                            <div
+                              className={`rounded-lg px-3 py-1.5 text-[11px] font-medium border ${
+                                shiftInfo.isWorkingToday
+                                  ? 'bg-[#E6F4F1]/70 border-[#CFE2DA] text-[#0F2922]'
+                                  : 'bg-amber-50 border-amber-200 text-amber-900'
+                              }`}
+                            >
+                              {shiftInfo.isWorkingToday
+                                ? `На ${rescheduleDate}: ${shiftInfo.statusText} (слоты врача: ${doc.shiftHours})`
+                                : `На ${rescheduleDate}: у врача выходной по графику 2/2 — запись возможна по предварительной брони`}
+                            </div>
+                          );
+                        })()}
 
                         {rescheduleError && (
                           <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
@@ -693,7 +728,7 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
 
                           <div>
                             <label className="block text-[11px] font-semibold text-[#335249] mb-1">
-                              Свободное время
+                              Окна врача (занятые недоступны)
                             </label>
                             <select
                               value={rescheduleTime}
@@ -703,11 +738,11 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
                               }}
                               className="w-full px-3 py-2 text-xs rounded-lg border border-[#D1EAE4] bg-[#F4FAF8] text-[#0F2922] tabular-nums focus:outline-none focus:border-[#0D9488]"
                             >
-                              {RESCHEDULE_TIME_SLOTS.map((slot) => {
+                              {getSlotsForRecord(item).map((slot) => {
                                 const isBusy = busySlots.has(slot);
                                 return (
                                   <option key={slot} value={slot} disabled={isBusy}>
-                                    {isBusy ? `${slot} — Занято` : slot}
+                                    {isBusy ? `${slot} — Занято` : `${slot} — Свободно`}
                                   </option>
                                 );
                               })}

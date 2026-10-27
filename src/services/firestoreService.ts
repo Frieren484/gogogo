@@ -247,6 +247,11 @@ export function sanitizeServiceForFirestore(item: ServiceItem): ServiceItem {
     description: clampString(item.description, 2000, 'Описание услуги'),
     included: safeIncluded,
     featured: Boolean(item.featured),
+    defaultDoctorName: clampString(
+      item.defaultDoctorName,
+      120,
+      'Волкова Елена Сергеевна'
+    ),
   };
 }
 
@@ -257,6 +262,13 @@ export function sanitizeDoctorForFirestore(item: DoctorProfile): DoctorProfile {
         .slice(0, 20)
         .map((s) => clampString(s, 200, 'Ветеринария'))
     : ['Терапия'];
+
+  const safeSlots = Array.isArray(item.personalSlots) && item.personalSlots.length > 0
+    ? item.personalSlots.slice(0, 20).map((s) => clampString(s, 16, '10:00'))
+    : ['10:00', '11:30', '13:00', '15:00', '16:30', '18:00'];
+
+  const safeBrigade = item.brigade === 2 ? 2 : 1;
+  const safeShiftType = item.shiftType === 'night' ? 'night' : 'day';
 
   return {
     id: safeId,
@@ -285,6 +297,14 @@ export function sanitizeDoctorForFirestore(item: DoctorProfile): DoctorProfile {
     ),
     fallbackTitle: clampString(item.fallbackTitle, 120, item.name || 'Врач'),
     accentColor: clampString(item.accentColor, 64, '#0D9488'),
+    brigade: safeBrigade,
+    shiftType: safeShiftType,
+    shiftHours: clampString(
+      item.shiftHours,
+      32,
+      safeShiftType === 'night' ? '20:00–10:00' : '10:00–20:00'
+    ),
+    personalSlots: safeSlots,
   };
 }
 
