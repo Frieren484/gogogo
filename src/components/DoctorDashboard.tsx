@@ -14,11 +14,21 @@ import {
   X,
 } from 'lucide-react';
 import {
+  addDaysToIso,
   AppointmentRecord,
   AppointmentStatus,
+  DEFAULT_SHIFT_SCHEDULE_CONFIG,
+  DoctorProfile,
+  DOCTORS_DATA,
+  DoctorSpecialStatusType,
+  DoctorStatusEvent,
+  getActiveDoctorStatusEvents,
+  getDoctorShiftForDate,
+  getDutyBrigadeForDate,
   resolveAppointmentPrice,
   ServiceItem,
   SERVICES_DATA,
+  ShiftScheduleConfig,
 } from '../data/clinicData';
 import { AppUserProfile } from '../services/authService';
 import { downloadAppointmentVoucher } from '../utils/appointmentVoucher';
@@ -33,6 +43,9 @@ interface DoctorDashboardProps {
   onUpdateAppointmentRecommendation: (id: string, recommendation: string) => void;
   onClaimAppointment?: (id: string, doctorName: string) => void;
   servicesList?: ServiceItem[];
+  doctorsList?: DoctorProfile[];
+  shiftConfig?: ShiftScheduleConfig;
+  onUpdateShiftConfig?: (config: ShiftScheduleConfig) => void;
 }
 
 const CLINICAL_TEMPLATES = [
@@ -66,7 +79,11 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({
   onUpdateAppointmentRecommendation,
   onClaimAppointment,
   servicesList = SERVICES_DATA,
+  doctorsList = DOCTORS_DATA,
+  shiftConfig = DEFAULT_SHIFT_SCHEDULE_CONFIG,
+  onUpdateShiftConfig,
 }) => {
+  const todayIso = new Date().toISOString().split('T')[0];
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStatus, setSelectedStatus] = useState<DoctorFilterTab>('all');
   const [editingNotesId, setEditingNotesId] = useState<string | null>(null);
@@ -74,6 +91,83 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({
   const [editingRecId, setEditingRecId] = useState<string | null>(null);
   const [editingRecText, setEditingRecText] = useState('');
   const [savedSuccessMessage, setSavedSuccessMessage] = useState<string | null>(null);
+
+  // Состояние формы больничного / отпуска / запроса замены и общего графика 2/2 из кабинета врача
+  const [showLeaveForm, setShowLeaveForm] = useState(false);
+  const [showFullClinicSchedule, setShowFullClinicSchedule] = useState(true);
+  const [clinicScheduleHorizon, setClinicScheduleHorizon] = useState<14 | 30 | 60>(14);
+  const [leaveType, setLeaveType] = useState<DoctorSpecialStatusType>('sick');
+  const [leaveStart, setLeaveStart] = useState<string>(() => addDaysToIso(todayIso, 1));
+  const [leaveEnd, setLeaveEnd] = useState<string>(() => addDaysToIso(todayIso, 4));
+  const [leaveReason, setLeaveReason] = useState<string>('Больничный лист (ОРВИ)');
+  const [leaveReplacementDoc, setLeaveReplacementDoc] = useState<string>(() => {
+    const otherDoc = doctorsList.find((d) => d.name !== currentUser.displayName);
+    return otherDoc?.name || 'Васильев Михаил Юрьевич';
+  });
+  const [autoTransferPatients, setAutoTransferPatients] = useState<boolean>(true);
+
+  const currentDoctorProfile = useMemo(() => {
+    const last = (currentUser.displayName || '').split(' ')[0]?.toLowerCase() || '';
+    return (
+      doctorsList.find((d) => d.name === currentUser.displayName) ||
+      doctorsList.find((d) => last && d.name.toLowerCase().includes(last)) ||
+      doctorsList[0]
+    );
+  }, [doctorsList, currentUser.displayName]);
+
+  const personal14Days = useMemo(() => {
+    return Array.from({ length: 14 }, (_, idx) => {
+      const iso = addDaysToIso(todayIso, idx);
+      const d = new Date(`${iso}T00:00:00`);
+      const label = d.toLocaleDateString('ru-RU', {
+        day: '2-digit',
+        month: '2-digit',
+      });
+      const weekday =
+        idx === 0
+          ? 'Сегодня'
+          : idx === 1
+          ? 'Завтра'
+          : d.toLocaleDateString('ru-RU', { weekday: 'short' });
+      const shift = getDoctorShiftForDate(currentDoctorProfile, iso, shiftConfig);
+      return {
+        iso,
+        label,
+        weekday,
+        shift,
+      };
+    });
+  }, [currentDoctorProfile, todayIso, shiftConfig]);
+
+  const clinicScheduleDates = useMemo(() => {
+    return Array.from({ length: clinicScheduleHorizon }, (_, idx) => {
+      const iso = addDaysToIso(todayIso, idx);
+      const d = new Date(`${iso}T00:00:00`);
+      const label = d.toLocaleDateString('ru-RU', {
+        day: '2-digit',
+        month: '2-digit',
+      });
+      const weekday =
+        idx === 0
+          ? 'Сегодня'
+          : idx === 1
+          ? 'Завтра'
+          : d.toLocaleDateString('ru-RU', { weekday: 'short' });
+      return {
+        iso,
+        label,
+        weekday,
+        brigade: getDutyBrigadeForDate(iso, shiftConfig),
+      };
+    });
+  }, [clinicScheduleHorizon, todayIso, shiftConfig]);
+
+  const myActiveLeaveEvents = useMemo(() => {
+    if (!currentDoctorProfile) return [];
+    return getActiveDoctorStatusEvents(shiftConfig).filter(
+      (ev) => ev.doctorName === currentDoctorProfile.name
+    );
+  }, [currentDoctorProfile, shiftConfig]);
 
   // 1. Именные заявки этого врача
   const doctorAppointments = useMemo(() => {
@@ -293,6 +387,378 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({
               </div>
             </button>
           </div>
+
+          {/* Personal 14-Day Schedule & Self-Service Sick Leave / Replacement Manager */}
+          {currentDoctorProfile && (
+            <div className="rounded-2xl bg-[#F4FAF8] border border-[#D1EAE4] p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-extrabold text-[#0F2922] flex items-center gap-2">
+                    <Calendar className="w-4 h-4 text-[#0D9488]" />
+                    <span>
+                      Мой график смен на 14 дней (Бригада №{currentDoctorProfile.brigade || 1} ·{' '}
+                      {currentDoctorProfile.shiftHours || '10:00–20:00'})
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#335249] mt-0.5">
+                    Здесь отображаются ваши рабочие смены 2/2, дни подмены за коллег, а также оформленные больничные и отпуска.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowFullClinicSchedule((prev) => !prev)}
+                    className="px-3 py-1.5 rounded-xl bg-[#0F2922] hover:bg-[#1E3F36] text-white text-xs font-bold transition-snappy cursor-pointer shrink-0"
+                  >
+                    {showFullClinicSchedule
+                      ? 'Скрыть общий график 2/2 всех врачей'
+                      : 'Общий график 2/2 всех врачей клиники'}
+                  </button>
+                  {onUpdateShiftConfig && (
+                    <button
+                      type="button"
+                      onClick={() => setShowLeaveForm((prev) => !prev)}
+                      className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-snappy cursor-pointer shrink-0"
+                    >
+                      {showLeaveForm
+                        ? 'Скрыть форму больничного/отпуска'
+                        : 'Сообщить о болезни / Оформить замену'}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* 14-day compact horizontal strip */}
+              <div className="grid grid-cols-2 sm:grid-cols-7 lg:grid-cols-14 gap-1.5">
+                {personal14Days.map((d) => {
+                  const st = d.shift;
+                  const boxClass =
+                    st.cellState === 'sick'
+                      ? 'bg-rose-100 border-rose-300 text-rose-950'
+                      : st.cellState === 'vacation'
+                      ? 'bg-sky-100 border-sky-300 text-sky-950'
+                      : st.cellState === 'training'
+                      ? 'bg-purple-100 border-purple-300 text-purple-950'
+                      : st.cellState === 'replacement'
+                      ? 'bg-teal-100 border-teal-400 text-teal-950'
+                      : st.isWorking
+                      ? 'bg-emerald-100 border-emerald-300 text-emerald-950'
+                      : 'bg-white border-[#D1EAE4] text-[#335249]';
+                  return (
+                    <div
+                      key={d.iso}
+                      title={`${d.label}: ${st.statusText}`}
+                      className={`p-1.5 rounded-lg border text-center text-[10px] ${boxClass}`}
+                    >
+                      <div className="uppercase opacity-75 text-[9px] font-bold truncate">
+                        {d.weekday}
+                      </div>
+                      <div className="font-extrabold tabular-nums">{d.label}</div>
+                      <div className="text-[9px] font-bold mt-0.5 truncate">
+                        {st.cellState === 'sick'
+                          ? 'Болен'
+                          : st.cellState === 'vacation'
+                          ? 'Отпуск'
+                          : st.cellState === 'training'
+                          ? 'Обуч.'
+                          : st.cellState === 'replacement'
+                          ? 'Замена'
+                          : st.isWorking
+                          ? 'Смена'
+                          : 'Вых.'}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Active leave badges with 1-click return to duty */}
+              {myActiveLeaveEvents.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  {myActiveLeaveEvents.map((ev) => (
+                    <div
+                      key={ev.id}
+                      className="inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-white border border-rose-200 text-xs text-[#0F2922]"
+                    >
+                      <span className="font-bold">
+                        {ev.type === 'sick'
+                          ? 'Больничный'
+                          : ev.type === 'vacation'
+                          ? 'Отпуск'
+                          : 'Обучение'}{' '}
+                        ({ev.startDate} — {ev.endDate}) · Подменяет:{' '}
+                        <strong>{ev.replacementDoctorName || 'Дежурный'}</strong>
+                      </span>
+                      {onUpdateShiftConfig && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const nextEvents = getActiveDoctorStatusEvents(shiftConfig).filter(
+                              (item) => item.id !== ev.id
+                            );
+                            onUpdateShiftConfig({
+                              ...shiftConfig,
+                              doctorStatusEvents: nextEvents,
+                            });
+                            showNotification(
+                              `Период «${ev.reasonLabel}» закрыт — вы снова в рабочем графике!`
+                            );
+                          }}
+                          className="text-[11px] font-extrabold text-emerald-700 hover:underline cursor-pointer"
+                        >
+                          Вернуться в строй ×
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Self-Service Sick Leave / Vacation Form */}
+              {showLeaveForm && onUpdateShiftConfig && (
+                <div className="rounded-xl bg-white border-2 border-rose-300 p-4 space-y-3 text-xs">
+                  <div className="font-extrabold text-[#0F2922]">
+                    Оформление больничного листа, отпуска или подмены с автоматической передачей смены
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                    <div>
+                      <label className="block font-bold text-[#335249] mb-1">Тип отсутствия</label>
+                      <select
+                        value={leaveType}
+                        onChange={(e) => {
+                          const val = e.target.value as DoctorSpecialStatusType;
+                          setLeaveType(val);
+                          if (val === 'sick') setLeaveReason('Больничный лист (ОРВИ)');
+                          if (val === 'vacation') setLeaveReason('Плановый отпуск');
+                          if (val === 'training') setLeaveReason('Повышение квалификации / Конференция');
+                        }}
+                        className="w-full px-2.5 py-2 rounded-lg border border-[#D1EAE4] bg-[#F4FAF8] font-bold"
+                      >
+                        <option value="sick">Больничный лист</option>
+                        <option value="vacation">Отпуск</option>
+                        <option value="training">Конференция / Обучение</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block font-bold text-[#335249] mb-1">Дата начала</label>
+                      <input
+                        type="date"
+                        value={leaveStart}
+                        onChange={(e) => setLeaveStart(e.target.value)}
+                        className="w-full px-2.5 py-2 rounded-lg border border-[#D1EAE4] bg-[#F4FAF8] tabular-nums"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-bold text-[#335249] mb-1">Дата окончания</label>
+                      <input
+                        type="date"
+                        min={leaveStart}
+                        value={leaveEnd}
+                        onChange={(e) => setLeaveEnd(e.target.value)}
+                        className="w-full px-2.5 py-2 rounded-lg border border-[#D1EAE4] bg-[#F4FAF8] tabular-nums"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-bold text-[#335249] mb-1">
+                        Кто выходит на замену
+                      </label>
+                      <select
+                        value={leaveReplacementDoc}
+                        onChange={(e) => setLeaveReplacementDoc(e.target.value)}
+                        className="w-full px-2.5 py-2 rounded-lg border border-[#D1EAE4] bg-[#F4FAF8] font-bold"
+                      >
+                        {doctorsList
+                          .filter((d) => d.name !== currentDoctorProfile.name)
+                          .map((d) => (
+                            <option key={d.id} value={d.name}>
+                              {d.name} (Бр.№{d.brigade})
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                    <label className="inline-flex items-center gap-2 font-semibold text-[#0F2922] cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={autoTransferPatients}
+                        onChange={(e) => setAutoTransferPatients(e.target.checked)}
+                        className="accent-[#0D9488]"
+                      />
+                      <span>
+                        Автоматически передать мои записи на эти даты заменяющему врачу ({leaveReplacementDoc})
+                      </span>
+                    </label>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!leaveStart || !leaveEnd || leaveEnd < leaveStart) return;
+                        const newEv: DoctorStatusEvent = {
+                          id: `ev-${Date.now()}`,
+                          doctorName: currentDoctorProfile.name,
+                          startDate: leaveStart,
+                          endDate: leaveEnd,
+                          type: leaveType,
+                          reasonLabel: leaveReason.trim() || 'Больничный лист',
+                          replacementDoctorName: leaveReplacementDoc,
+                        };
+                        const nextEvents = [
+                          newEv,
+                          ...getActiveDoctorStatusEvents(shiftConfig),
+                        ];
+                        onUpdateShiftConfig({
+                          ...shiftConfig,
+                          doctorStatusEvents: nextEvents,
+                        });
+
+                        let transferred = 0;
+                        if (autoTransferPatients && onClaimAppointment) {
+                          doctorAppointments.forEach((appt) => {
+                            if (appt.status === 'Отменена' || appt.status === 'Завершена') return;
+                            const apptDate = appt.preferredDate.split(' в ')[0]?.trim() || '';
+                            if (apptDate >= leaveStart && apptDate <= leaveEnd) {
+                              onClaimAppointment(appt.id, leaveReplacementDoc);
+                              transferred += 1;
+                            }
+                          });
+                        }
+
+                        setShowLeaveForm(false);
+                        showNotification(
+                          `Оформлено: ${newEv.reasonLabel} (${leaveStart} — ${leaveEnd}). На замену назначен ${leaveReplacementDoc}${
+                            transferred > 0 ? `. Передано записей: ${transferred}` : ''
+                          }.`
+                        );
+                      }}
+                      className="px-4 py-2 rounded-xl bg-[#0D9488] hover:bg-[#0F766E] text-white font-bold cursor-pointer"
+                    >
+                      Сохранить в график и назначить замену
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Full Clinic 8-Doctor 2/2 Schedule Matrix (Exclusively for Doctors & Admin) */}
+              {showFullClinicSchedule && (
+                <div className="rounded-xl bg-white border border-[#D1EAE4] p-4 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="text-xs font-extrabold text-[#0F2922]">
+                        Служебный график дежурств всех врачей клиники (2 через 2 · Бригады №1 и №2 · Смены 10:00–20:00 и 20:00–10:00)
+                      </div>
+                      <div className="text-[11px] text-[#335249]">
+                        Только для внутреннего пользования врачей и администрации
+                      </div>
+                    </div>
+                    <div className="inline-flex items-center rounded-lg bg-[#F4FAF8] p-1 border border-[#D1EAE4]">
+                      {([14, 30, 60] as const).map((days) => (
+                        <button
+                          key={days}
+                          type="button"
+                          onClick={() => setClinicScheduleHorizon(days)}
+                          className={`px-2.5 py-1 rounded-md text-[11px] font-bold cursor-pointer ${
+                            clinicScheduleHorizon === days
+                              ? 'bg-[#0D9488] text-white'
+                              : 'text-[#335249] hover:text-[#0F2922]'
+                          }`}
+                        >
+                          {days} дн.
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto pb-1">
+                    <table className="w-full text-left border-collapse min-w-[880px] text-[11px]">
+                      <thead>
+                        <tr className="border-b border-[#D1EAE4] text-[#335249]">
+                          <th className="py-2 px-2.5 font-extrabold text-[#0F2922] min-w-[210px] sticky left-0 bg-white z-10 border-r border-[#D1EAE4]">
+                            Врач / Бригада и смена
+                          </th>
+                          {clinicScheduleDates.map((d) => (
+                            <th key={d.iso} className="py-1.5 px-1.5 text-center min-w-[82px]">
+                              <div className="text-[9px] uppercase text-[#335249]">{d.weekday}</div>
+                              <div className="font-extrabold text-[#0F2922] tabular-nums">{d.label}</div>
+                              <div
+                                className={`mt-0.5 inline-block px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                  d.brigade === 1
+                                    ? 'bg-[#0D9488] text-white'
+                                    : 'bg-indigo-600 text-white'
+                                }`}
+                              >
+                                Бр. №{d.brigade}
+                              </div>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#D1EAE4]/60">
+                        {doctorsList.map((doc) => {
+                          const isMe = doc.name === currentDoctorProfile.name;
+                          return (
+                            <tr
+                              key={doc.id}
+                              className={isMe ? 'bg-amber-50/60' : 'hover:bg-[#F4FAF8]/60'}
+                            >
+                              <td className="py-2 px-2.5 sticky left-0 z-10 bg-white border-r border-[#D1EAE4]">
+                                <div className="font-extrabold text-[#0F2922] truncate max-w-[200px]">
+                                  {doc.name} {isMe ? '(Вы)' : ''}
+                                </div>
+                                <div className="text-[10px] font-semibold text-[#335249]">
+                                  Бригада №{doc.brigade || 1} ·{' '}
+                                  {doc.shiftType === 'night' ? 'Ночь 20:00–10:00' : 'День 10:00–20:00'}
+                                </div>
+                              </td>
+                              {clinicScheduleDates.map((d) => {
+                                const st = getDoctorShiftForDate(doc, d.iso, shiftConfig);
+                                const badgeClass =
+                                  st.cellState === 'sick'
+                                    ? 'bg-rose-100 text-rose-900 border-rose-200'
+                                    : st.cellState === 'vacation'
+                                    ? 'bg-sky-100 text-sky-900 border-sky-200'
+                                    : st.cellState === 'training'
+                                    ? 'bg-purple-100 text-purple-900 border-purple-200'
+                                    : st.cellState === 'replacement'
+                                    ? 'bg-teal-100 text-teal-950 border-teal-300'
+                                    : st.isWorking
+                                    ? doc.shiftType === 'night'
+                                      ? 'bg-indigo-100 text-indigo-950 border-indigo-200'
+                                      : 'bg-emerald-100 text-emerald-950 border-emerald-200'
+                                    : 'bg-slate-50 text-slate-500 border-slate-200';
+                                return (
+                                  <td key={d.iso} className="p-1 text-center">
+                                    <div
+                                      title={st.statusText}
+                                      className={`py-1 px-1 rounded border text-[10px] font-bold ${badgeClass}`}
+                                    >
+                                      {st.cellState === 'sick'
+                                        ? 'Болен'
+                                        : st.cellState === 'vacation'
+                                        ? 'Отпуск'
+                                        : st.cellState === 'training'
+                                        ? 'Обучение'
+                                        : st.cellState === 'replacement'
+                                        ? 'Замена'
+                                        : st.isWorking
+                                        ? st.shiftHours
+                                        : 'Выходной'}
+                                    </div>
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Unassigned Duty Queue Notice */}
           {stats.dutyCount > 0 && selectedStatus !== 'duty' && (

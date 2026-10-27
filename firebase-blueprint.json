@@ -23,7 +23,9 @@
         },
         "notes": { "type": "string", "description": "Anamnesis or owner comments" },
         "ownerUid": { "type": "string", "description": "UID of the user who created the appointment" },
-        "doctorRecommendation": { "type": "string", "description": "Doctor's conclusion and instructions" }
+        "doctorRecommendation": { "type": "string", "description": "Doctor's conclusion and instructions" },
+        "preferredTimeSlot": { "type": "string", "description": "Selected doctor time slot (HH:MM)" },
+        "isOffShiftBooking": { "type": "boolean", "description": "Whether the booking is a pre-booking on a doctor's off-shift day" }
       },
       "required": [
         "id",
@@ -106,7 +108,8 @@
         "priceFrom": { "type": "number" },
         "description": { "type": "string" },
         "included": { "type": "array", "items": { "type": "string" } },
-        "featured": { "type": "boolean" }
+        "featured": { "type": "boolean" },
+        "defaultDoctorName": { "type": "string" }
       },
       "required": [
         "id",
@@ -135,7 +138,11 @@
         "specialties": { "type": "array", "items": { "type": "string" } },
         "photoUrl": { "type": "string" },
         "fallbackTitle": { "type": "string" },
-        "accentColor": { "type": "string" }
+        "accentColor": { "type": "string" },
+        "brigade": { "type": "number" },
+        "shiftType": { "type": "string", "enum": ["day", "night"] },
+        "shiftHours": { "type": "string" },
+        "personalSlots": { "type": "array", "items": { "type": "string" } }
       },
       "required": [
         "id",

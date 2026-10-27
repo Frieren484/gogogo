@@ -63,6 +63,24 @@ export const DUTY_DOCTOR_FALLBACK_SLOTS: string[] = [
   '23:00',
 ];
 
+export type DoctorSpecialStatusType =
+  | 'sick'
+  | 'vacation'
+  | 'training'
+  | 'replacement'
+  | 'working'
+  | 'off';
+
+export interface DoctorStatusEvent {
+  id: string;
+  doctorName: string;
+  startDate: string; // YYYY-MM-DD inclusive
+  endDate: string; // YYYY-MM-DD inclusive
+  type: DoctorSpecialStatusType;
+  reasonLabel: string;
+  replacementDoctorName?: string;
+}
+
 export interface ShiftScheduleConfig {
   anchorDate: string; // YYYY-MM-DD start of 2/2 cycle
   phaseOffset: 0 | 1 | 2 | 3; // allows shifting the 2/2 cycle or switching today's duty brigade
@@ -70,15 +88,154 @@ export interface ShiftScheduleConfig {
   cycleMode?: '2x2' | '2_2' | 'daily';
   dateBrigadeOverrides: Record<string, DoctorBrigade>; // explicit Admin override for specific YYYY-MM-DD dates
   manualOverrides?: Record<string, DoctorBrigade>;
+  doctorStatusEvents?: DoctorStatusEvent[];
 }
 
+export function addDaysToIso(baseIso: string, offsetDays: number): string {
+  const d = baseIso ? new Date(`${baseIso}T00:00:00`) : new Date();
+  d.setDate(d.getDate() + offsetDays);
+  return d.toISOString().split('T')[0];
+}
+
+const BASE_ANCHOR_ISO = new Date().toISOString().split('T')[0];
+
+export const DEFAULT_DOCTOR_STATUS_EVENTS: DoctorStatusEvent[] = [
+  {
+    id: 'ev-sick-smirnov-1',
+    doctorName: 'Смирнов Алексей Викторович',
+    startDate: addDaysToIso(BASE_ANCHOR_ISO, 2),
+    endDate: addDaysToIso(BASE_ANCHOR_ISO, 5),
+    type: 'sick',
+    reasonLabel: 'Больничный лист (ОРВИ)',
+    replacementDoctorName: 'Васильев Михаил Юрьевич',
+  },
+  {
+    id: 'ev-training-pavlova-1',
+    doctorName: 'Павлова Ирина Николаевна',
+    startDate: addDaysToIso(BASE_ANCHOR_ISO, 6),
+    endDate: addDaysToIso(BASE_ANCHOR_ISO, 8),
+    type: 'training',
+    reasonLabel: 'Вет. конгресс эндокринологов ESVE',
+    replacementDoctorName: 'Волкова Елена Сергеевна',
+  },
+  {
+    id: 'ev-vacation-sokolova-1',
+    doctorName: 'Соколова Анна Павловна',
+    startDate: addDaysToIso(BASE_ANCHOR_ISO, 10),
+    endDate: addDaysToIso(BASE_ANCHOR_ISO, 16),
+    type: 'vacation',
+    reasonLabel: 'Плановый отпуск',
+    replacementDoctorName: 'Новикова Ольга Дмитриевна',
+  },
+  {
+    id: 'ev-sick-kuznetsov-1',
+    doctorName: 'Кузнецов Артём Романович',
+    startDate: addDaysToIso(BASE_ANCHOR_ISO, 18),
+    endDate: addDaysToIso(BASE_ANCHOR_ISO, 21),
+    type: 'sick',
+    reasonLabel: 'Больничный лист',
+    replacementDoctorName: 'Морозов Дмитрий Игоревич',
+  },
+  {
+    id: 'ev-training-vasiliev-1',
+    doctorName: 'Васильев Михаил Юрьевич',
+    startDate: addDaysToIso(BASE_ANCHOR_ISO, 24),
+    endDate: addDaysToIso(BASE_ANCHOR_ISO, 27),
+    type: 'training',
+    reasonLabel: 'Стажировка по ортопедии AOVET',
+    replacementDoctorName: 'Смирнов Алексей Викторович',
+  },
+  {
+    id: 'ev-vacation-morozov-1',
+    doctorName: 'Морозов Дмитрий Игоревич',
+    startDate: addDaysToIso(BASE_ANCHOR_ISO, 31),
+    endDate: addDaysToIso(BASE_ANCHOR_ISO, 39),
+    type: 'vacation',
+    reasonLabel: 'Плановый отпуск',
+    replacementDoctorName: 'Кузнецов Артём Романович',
+  },
+  {
+    id: 'ev-sick-volkova-1',
+    doctorName: 'Волкова Елена Сергеевна',
+    startDate: addDaysToIso(BASE_ANCHOR_ISO, 42),
+    endDate: addDaysToIso(BASE_ANCHOR_ISO, 45),
+    type: 'sick',
+    reasonLabel: 'Больничный (ОРВИ)',
+    replacementDoctorName: 'Павлова Ирина Николаевна',
+  },
+  {
+    id: 'ev-training-novikova-1',
+    doctorName: 'Новикова Ольга Дмитриевна',
+    startDate: addDaysToIso(BASE_ANCHOR_ISO, 49),
+    endDate: addDaysToIso(BASE_ANCHOR_ISO, 52),
+    type: 'training',
+    reasonLabel: 'Симпозиум дерматологов ESVD',
+    replacementDoctorName: 'Соколова Анна Павловна',
+  },
+  {
+    id: 'ev-vacation-pavlova-2',
+    doctorName: 'Павлова Ирина Николаевна',
+    startDate: addDaysToIso(BASE_ANCHOR_ISO, 56),
+    endDate: addDaysToIso(BASE_ANCHOR_ISO, 65),
+    type: 'vacation',
+    reasonLabel: 'Плановый отпуск',
+    replacementDoctorName: 'Волкова Елена Сергеевна',
+  },
+  {
+    id: 'ev-training-smirnov-2',
+    doctorName: 'Смирнов Алексей Викторович',
+    startDate: addDaysToIso(BASE_ANCHOR_ISO, 69),
+    endDate: addDaysToIso(BASE_ANCHOR_ISO, 72),
+    type: 'training',
+    reasonLabel: 'Конференция по эндохирургии',
+    replacementDoctorName: 'Васильев Михаил Юрьевич',
+  },
+  {
+    id: 'ev-sick-sokolova-2',
+    doctorName: 'Соколова Анна Павловна',
+    startDate: addDaysToIso(BASE_ANCHOR_ISO, 76),
+    endDate: addDaysToIso(BASE_ANCHOR_ISO, 79),
+    type: 'sick',
+    reasonLabel: 'Больничный лист',
+    replacementDoctorName: 'Новикова Ольга Дмитриевна',
+  },
+  {
+    id: 'ev-vacation-kuznetsov-2',
+    doctorName: 'Кузнецов Артём Романович',
+    startDate: addDaysToIso(BASE_ANCHOR_ISO, 83),
+    endDate: addDaysToIso(BASE_ANCHOR_ISO, 91),
+    type: 'vacation',
+    reasonLabel: 'Плановый отпуск',
+    replacementDoctorName: 'Морозов Дмитрий Игоревич',
+  },
+  {
+    id: 'ev-sick-vasiliev-2',
+    doctorName: 'Васильев Михаил Юрьевич',
+    startDate: addDaysToIso(BASE_ANCHOR_ISO, 95),
+    endDate: addDaysToIso(BASE_ANCHOR_ISO, 98),
+    type: 'sick',
+    reasonLabel: 'Больничный лист',
+    replacementDoctorName: 'Смирнов Алексей Викторович',
+  },
+  {
+    id: 'ev-vacation-volkova-2',
+    doctorName: 'Волкова Елена Сергеевна',
+    startDate: addDaysToIso(BASE_ANCHOR_ISO, 103),
+    endDate: addDaysToIso(BASE_ANCHOR_ISO, 112),
+    type: 'vacation',
+    reasonLabel: 'Плановый отпуск',
+    replacementDoctorName: 'Павлова Ирина Николаевна',
+  },
+];
+
 export const DEFAULT_SHIFT_SCHEDULE_CONFIG: ShiftScheduleConfig = {
-  anchorDate: new Date().toISOString().split('T')[0],
+  anchorDate: BASE_ANCHOR_ISO,
   phaseOffset: 0,
   rotationMode: '2x2',
   cycleMode: '2x2',
   dateBrigadeOverrides: {},
   manualOverrides: {},
+  doctorStatusEvents: DEFAULT_DOCTOR_STATUS_EVENTS,
 };
 
 export interface TestimonialItem {
@@ -121,9 +278,11 @@ export interface AppointmentRecord {
   serviceTitle: string;
   doctorName: string;
   preferredDate: string;
+  preferredTimeSlot?: string;
   estimatedPrice: number;
   isEmergency?: boolean;
   isAdvanceBooking?: boolean;
+  isOffShiftBooking?: boolean;
   status: string;
   notes?: string;
   ownerUid?: string;
@@ -137,7 +296,7 @@ export const CLINIC_INFO = {
   phoneDisplay: '+7 (495) 128-24-07',
   phoneRaw: '+74951282407',
   emergencyDispatchMinutes: 30,
-  schedule: 'Круглосуточно 24/7 · Смены 10:00–20:00 и 20:00–10:00 (график 2/2)',
+  schedule: 'Круглосуточно 24/7, без выходных',
   licenseNumber: 'Лицензия Департамента ветеринарии № ЛО-77-01-021849',
   heroPhotoUrl:
     'https://images.unsplash.com/photo-1628009368231-7bb7cfcb0def?auto=format&fit=crop&w=1400&q=85',
@@ -516,7 +675,7 @@ export const DOCTORS_DATA: DoctorProfile[] = [
     shiftType: 'day',
     shiftHours: '10:00–20:00',
     personalSlots: ['10:00', '11:30', '13:00', '15:00', '16:30', '18:00', '19:15'],
-    assignedDirections: ['Травматология и ортопедия (Бригада №2)'],
+    assignedDirections: ['Травматология и ортопедия'],
   },
   {
     id: 'pavlova',
@@ -633,11 +792,30 @@ export function getDutyBrigadeForDate(
 }
 
 /**
- * Возвращает статус смены конкретного врача на выбранную дату YYYY-MM-DD:
- * - isWorkingOnDate / isWorking / isWorkingToday: true, если его бригада сегодня на дежурстве
- * - shiftType: 'day' (10:00–20:00) или 'night' (20:00–10:00)
- * - shiftHours: '10:00–20:00' или '20:00–10:00'
- * - personalSlots: индивидуальные часы приема этого врача
+ * Возвращает актуальный список событий (больничные, отпуска, обучение, подмены)
+ */
+export function getActiveDoctorStatusEvents(
+  config: ShiftScheduleConfig = DEFAULT_SHIFT_SCHEDULE_CONFIG
+): DoctorStatusEvent[] {
+  if (Array.isArray(config.doctorStatusEvents)) {
+    return config.doctorStatusEvents;
+  }
+  return DEFAULT_DOCTOR_STATUS_EVENTS;
+}
+
+export type DoctorCellShiftState =
+  | 'working'
+  | 'replacement'
+  | 'off'
+  | 'sick'
+  | 'vacation'
+  | 'training';
+
+/**
+ * Возвращает статус смены конкретного врача на выбранную дату YYYY-MM-DD с учетом:
+ * - графика 2/2 (дневная 10:00–20:00 или ночная 20:00–10:00)
+ * - больничных листов (sick), отпусков (vacation), конференций/обучения (training)
+ * - автоматического выхода на замену (replacement) за заболевшего или отсутствующего коллегу из другой бригады
  */
 export function getDoctorShiftForDate(
   doctor: DoctorProfile | undefined,
@@ -647,6 +825,12 @@ export function getDoctorShiftForDate(
   isWorkingOnDate: boolean;
   isWorking: boolean;
   isWorkingToday: boolean;
+  isAbsent: boolean;
+  isReplacement: boolean;
+  cellState: DoctorCellShiftState;
+  specialReason?: string;
+  replacementDoctorName?: string;
+  replacingForDoctorName?: string;
   statusText: string;
   dutyBrigade: DoctorBrigade;
   doctorBrigade: DoctorBrigade;
@@ -660,6 +844,9 @@ export function getDoctorShiftForDate(
       isWorkingOnDate: true,
       isWorking: true,
       isWorkingToday: true,
+      isAbsent: false,
+      isReplacement: false,
+      cellState: 'working',
       statusText: `Дежурит Бригада №${dutyBrigade} (круглосуточно 10:00–20:00 и 20:00–10:00)`,
       dutyBrigade,
       doctorBrigade: dutyBrigade,
@@ -680,15 +867,129 @@ export function getDoctorShiftForDate(
       ? ['10:00', '11:30', '13:00', '15:00', '16:30', '18:00', '19:00']
       : ['20:00', '21:30', '23:00', '01:00', '03:00', '06:00', '08:30'];
 
-  const isWorking = docBrigade === dutyBrigade;
-  const statusText = isWorking
+  const events = getActiveDoctorStatusEvents(config);
+
+  // 1. Проверяем личное событие врача (больничный, отпуск, обучение, ручная замена или отгул)
+  const ownEvent = events.find(
+    (ev) =>
+      ev.doctorName === doctor.name &&
+      dateStr >= ev.startDate &&
+      dateStr <= ev.endDate
+  );
+
+  if (ownEvent) {
+    if (
+      ownEvent.type === 'sick' ||
+      ownEvent.type === 'vacation' ||
+      ownEvent.type === 'training'
+    ) {
+      const prefix =
+        ownEvent.type === 'sick'
+          ? 'Больничный'
+          : ownEvent.type === 'vacation'
+          ? 'В отпуске'
+          : 'На обучении';
+      const repInfo = ownEvent.replacementDoctorName
+        ? ` · На смене заменяет: ${ownEvent.replacementDoctorName}`
+        : '';
+      return {
+        isWorkingOnDate: false,
+        isWorking: false,
+        isWorkingToday: false,
+        isAbsent: true,
+        isReplacement: false,
+        cellState: ownEvent.type,
+        specialReason: ownEvent.reasonLabel,
+        replacementDoctorName: ownEvent.replacementDoctorName,
+        statusText: `${prefix} (${ownEvent.reasonLabel})${repInfo}`,
+        dutyBrigade,
+        doctorBrigade: docBrigade,
+        shiftType,
+        shiftHours,
+        personalSlots,
+      };
+    }
+
+    if (ownEvent.type === 'replacement' || ownEvent.type === 'working') {
+      return {
+        isWorkingOnDate: true,
+        isWorking: true,
+        isWorkingToday: true,
+        isAbsent: false,
+        isReplacement: true,
+        cellState: 'replacement',
+        specialReason: ownEvent.reasonLabel || 'Выход на замену',
+        statusText: `На смене по замене (${shiftHours}) · ${ownEvent.reasonLabel}`,
+        dutyBrigade,
+        doctorBrigade: docBrigade,
+        shiftType,
+        shiftHours,
+        personalSlots,
+      };
+    }
+
+    if (ownEvent.type === 'off') {
+      return {
+        isWorkingOnDate: false,
+        isWorking: false,
+        isWorkingToday: false,
+        isAbsent: false,
+        isReplacement: false,
+        cellState: 'off',
+        specialReason: ownEvent.reasonLabel || 'Отгул',
+        statusText: `Выходной / отгул (${ownEvent.reasonLabel}) · запись по предварительной брони`,
+        dutyBrigade,
+        doctorBrigade: docBrigade,
+        shiftType,
+        shiftHours,
+        personalSlots,
+      };
+    }
+  }
+
+  // 2. Проверяем, не выходит ли этот врач сегодня на замену за заболевшего/отсутствующего коллегу из дежурной бригады
+  const isNormallyWorking = docBrigade === dutyBrigade;
+  if (!isNormallyWorking) {
+    const coveredColleagueEvent = events.find(
+      (ev) =>
+        (ev.type === 'sick' || ev.type === 'vacation' || ev.type === 'training') &&
+        ev.replacementDoctorName === doctor.name &&
+        dateStr >= ev.startDate &&
+        dateStr <= ev.endDate
+    );
+
+    if (coveredColleagueEvent) {
+      const colleagueSurname = coveredColleagueEvent.doctorName.split(' ')[0];
+      return {
+        isWorkingOnDate: true,
+        isWorking: true,
+        isWorkingToday: true,
+        isAbsent: false,
+        isReplacement: true,
+        cellState: 'replacement',
+        specialReason: `Подмена за врача ${colleagueSurname} (${coveredColleagueEvent.reasonLabel})`,
+        replacingForDoctorName: coveredColleagueEvent.doctorName,
+        statusText: `Вышел на замену (${shiftHours}) вместо врача ${coveredColleagueEvent.doctorName}`,
+        dutyBrigade,
+        doctorBrigade: docBrigade,
+        shiftType,
+        shiftHours,
+        personalSlots,
+      };
+    }
+  }
+
+  const statusText = isNormallyWorking
     ? `На смене (${shiftType === 'night' ? 'ночная' : 'дневная'} ${shiftHours})`
     : `Выходной по графику 2/2 · запись по предварительной брони (${shiftHours})`;
 
   return {
-    isWorkingOnDate: isWorking,
-    isWorking,
-    isWorkingToday: isWorking,
+    isWorkingOnDate: isNormallyWorking,
+    isWorking: isNormallyWorking,
+    isWorkingToday: isNormallyWorking,
+    isAbsent: false,
+    isReplacement: false,
+    cellState: isNormallyWorking ? 'working' : 'off',
     statusText,
     dutyBrigade,
     doctorBrigade: docBrigade,
@@ -700,6 +1001,7 @@ export function getDoctorShiftForDate(
 
 /**
  * Возвращает список ближайших рабочих дат (YYYY-MM-DD) для выбранного врача по графику 2/2
+ * (пропуская дни больничного, отпуска и обучения, но включая дни подмены)
  */
 export function getNextWorkingDatesForDoctor(
   doctor: DoctorProfile | undefined,
@@ -709,11 +1011,11 @@ export function getNextWorkingDatesForDoctor(
 ): string[] {
   const result: string[] = [];
   const baseDate = fromDateStr ? new Date(`${fromDateStr}T00:00:00`) : new Date();
-  for (let i = 0; i < 21 && result.length < count; i++) {
+  for (let i = 0; i < 45 && result.length < count; i++) {
     const d = new Date(baseDate.getTime() + i * 86400000);
     const iso = d.toISOString().split('T')[0];
     const status = getDoctorShiftForDate(doctor, iso, config);
-    if (status.isWorkingOnDate) {
+    if (status.isWorkingOnDate && !status.isAbsent) {
       result.push(iso);
     }
   }
@@ -984,10 +1286,10 @@ export const FAQ_DATA: FaqItem[] = [
   },
   {
     id: 'faq-2',
-    category: 'График 2/2 и Смены',
-    question: 'По какому графику работают врачи и можно ли записаться к врачу, у которого сегодня выходной?',
+    category: 'Прием узких специалистов',
+    question: 'Как выбрать нужного профильного врача для моего питомца?',
     answer:
-      'В клинике работают 8 профильных специалистов, распределенных на 2 дежурные бригады по графику 2 через 2. В каждой бригаде два врача ведут дневной прием с 10:00 до 20:00 и два врача — ночное дежурство с 20:00 до 10:00 утра. Если у нужного вам узкого специалиста в выбранный день выходной, вы можете оформить к нему предварительную запись по брони или одним нажатием выбрать его ближайшую рабочую смену.',
+      'За каждым направлением диагностики, терапии, хирургии и комплексного чек-апа в нашей клинике закреплен профильный ведущий специалист. При оформлении онлайн-записи система автоматически предложит вам профильного врача по вашей проблеме, но вы всегда можете выбрать любого другого специалиста клиники и удобное свободное окно времени.',
   },
   {
     id: 'faq-3',
@@ -1305,7 +1607,7 @@ export const INITIAL_APPOINTMENTS_DATA: AppointmentRecord[] = [
     estimatedPrice: 6500,
     isEmergency: false,
     status: 'Подтверждена',
-    notes: 'Померанский шпиц, контрольный осмотр у травматолога Бригады №2.',
+    notes: 'Померанский шпиц, контрольный осмотр у хирурга-травматолога.',
   },
   {
     id: 'LP-849518',
@@ -1335,7 +1637,7 @@ export const INITIAL_APPOINTMENTS_DATA: AppointmentRecord[] = [
     estimatedPrice: 4800,
     isEmergency: true,
     status: 'Подтверждена',
-    notes: 'Лабрадор, 6 лет. Мониторинг в ночном стационаре ОРИТ Бригады №2.',
+    notes: 'Лабрадор, 6 лет. Мониторинг в стационаре интенсивной терапии ОРИТ.',
   },
   {
     id: 'LP-849560',

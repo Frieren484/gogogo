@@ -1,18 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
-  BookmarkCheck,
   Calendar,
   CheckCircle2,
   ClipboardCheck,
   Clock,
   Download,
-  Moon,
   PawPrint,
   Phone,
   ShieldCheck,
   Stethoscope,
-  Sun,
   User,
   X,
 } from 'lucide-react';
@@ -126,32 +123,11 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     [selectedDoctorProfile, preferredDate, shiftConfig]
   );
 
-  // Ближайшие рабочие даты выбранного врача по графику 2/2
+  // Ближайшие доступные даты выбранного врача
   const nextWorkingDates = useMemo(
     () => getNextWorkingDatesForDoctor(selectedDoctorProfile, todayDate, 4, shiftConfig),
     [selectedDoctorProfile, todayDate, shiftConfig]
   );
-
-  // 7-дневная лента графика выбранного врача для наглядного выбора дня
-  const doctor7DaySchedule = useMemo(() => {
-    return Array.from({ length: 7 }, (_, idx) => {
-      const d = new Date(Date.now() + idx * 86400000);
-      const iso = d.toISOString().split('T')[0];
-      const dayLabel = d.toLocaleDateString('ru-RU', {
-        weekday: 'short',
-        day: 'numeric',
-        month: 'short',
-      });
-      const shift = getDoctorShiftForDate(selectedDoctorProfile, iso, shiftConfig);
-      return {
-        iso,
-        dayLabel,
-        isWorking: shift.isWorkingOnDate,
-        shiftType: shift.shiftType,
-        shiftHours: shift.shiftHours,
-      };
-    });
-  }, [selectedDoctorProfile, shiftConfig]);
 
   // Персональные слоты времени для текущего выбранного врача
   const activeTimeSlots = useMemo(
@@ -322,9 +298,14 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     if (errorMessage) setErrorMessage('');
   };
 
+  const isDoctorAbsentOnSelectedDate =
+    selectedDoctor !== 'Дежурный специалист клиники' &&
+    doctorShiftInfo.isAbsent;
+
   const isBookingOnDoctorOffDay =
     selectedDoctor !== 'Дежурный специалист клиники' &&
-    !doctorShiftInfo.isWorkingOnDate;
+    !doctorShiftInfo.isWorkingOnDate &&
+    !doctorShiftInfo.isAbsent;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -361,6 +342,13 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       return;
     }
 
+    if (isDoctorAbsentOnSelectedDate) {
+      setErrorMessage(
+        `Врач «${selectedDoctor}» на дату ${preferredDate} не ведет прием (${doctorShiftInfo.specialReason || 'отсутствует'}). Выберите заменяющего врача (${doctorShiftInfo.replacementDoctorName || 'Дежурный специалист клиники'}) или переключитесь на рабочий день специалиста.`
+      );
+      return;
+    }
+
     // Проверка на пересечение слотов у врача
     if (occupiedSlotsForDoctorAndDate.has(preferredTime)) {
       setErrorMessage(
@@ -369,12 +357,9 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       return;
     }
 
-    const baseNote =
+    const finalNotes =
       notes.trim() ||
       (prefill?.isEmergency ? 'Экстренный вызов через сайт' : 'Запись онлайн через сайт');
-    const finalNotes = isBookingOnDoctorOffDay
-      ? `${baseNote} [Оформлено по предварительной брони — у врача выходной по графику 2/2]`
-      : baseNote;
 
     const newRecord: AppointmentRecord = {
       id: `LP-${Math.floor(100000 + Math.random() * 900000)}`,
@@ -388,9 +373,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       petName: trimmedPet,
       serviceTitle: selectedService,
       doctorName: selectedDoctor,
-      preferredDate: `${preferredDate} в ${preferredTime}${
-        isBookingOnDoctorOffDay ? ' (по брони)' : ''
-      }`,
+      preferredDate: `${preferredDate} в ${preferredTime}`,
       estimatedPrice: computedEstimatedPrice,
       isEmergency: prefill?.isEmergency || false,
       isAdvanceBooking: isBookingOnDoctorOffDay,
@@ -404,9 +387,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
     if (onShowToast) {
       onShowToast(
-        isBookingOnDoctorOffDay
-          ? `Бронь #${newRecord.id} к врачу «${newRecord.doctorName}» успешно оформлена на ${newRecord.preferredDate}!`
-          : `Заявка #${newRecord.id} для питомца «${newRecord.petName}» успешно оформлена на ${newRecord.preferredDate}!`
+        `Заявка #${newRecord.id} для питомца «${newRecord.petName}» успешно оформлена на ${newRecord.preferredDate}!`
       );
     }
   };
@@ -437,7 +418,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 Запись на прием в «Лапу Помощи»
               </h3>
               <p className="text-xs text-[#35524A]">
-                График врачей 2/2 (дневная смена 10:00–20:00 · ночная смена 20:00–10:00)
+                Выберите направление, специалиста и удобное время визита
               </p>
             </div>
           </div>
@@ -457,9 +438,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               <CheckCircle2 className="w-9 h-9" />
             </div>
             <h4 className="text-xl sm:text-2xl font-bold text-[#122B24] mb-2">
-              {submittedRecord.isAdvanceBooking
-                ? 'Предварительная бронь успешно оформлена!'
-                : 'Ваш талон на приём успешно оформлен!'}
+              Ваш талон на приём успешно оформлен!
             </h4>
             <p className="text-xs sm:text-sm text-[#35524A] max-w-md mx-auto mb-5">
               Заявка{' '}
@@ -710,19 +689,13 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   className="w-full px-3 py-2.5 text-xs sm:text-sm rounded-xl border border-[#CFE2DA] bg-white text-[#122B24] font-semibold focus:outline-none focus:border-[#0D9488]"
                 >
                   <option value="Дежурный специалист клиники">
-                    Дежурный специалист клиники (Бригада №{doctorShiftInfo.dutyBrigade})
+                    Дежурный специалист клиники
                   </option>
-                  {doctorsList.map((doc) => {
-                    const st = getDoctorShiftForDate(doc, preferredDate, shiftConfig);
-                    const shiftBadge =
-                      doc.shiftType === 'night' ? 'Ночь 20:00–10:00' : 'День 10:00–20:00';
-                    const statusText = st.isWorkingOnDate ? 'На смене' : 'По брони (вых.)';
-                    return (
-                      <option key={doc.id} value={doc.name}>
-                        {doc.name} · Бр.{doc.brigade} ({shiftBadge} · {statusText})
-                      </option>
-                    );
-                  })}
+                  {doctorsList.map((doc) => (
+                    <option key={doc.id} value={doc.name}>
+                      {doc.name} — {doc.role}
+                    </option>
+                  ))}
                 </select>
               </div>
 
@@ -744,104 +717,52 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               </div>
             </div>
 
-            {/* 7-Day Visual Shift Strip for the Selected Doctor */}
-            {selectedDoctorProfile && (
-              <div className="rounded-xl bg-[#EEF5F1] border border-[#CFE2DA] p-3 space-y-2">
-                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <div className="flex items-center gap-1.5 font-bold text-[#122B24]">
-                    {selectedDoctorProfile.shiftType === 'day' ? (
-                      <Sun className="w-3.5 h-3.5 text-amber-600" />
-                    ) : (
-                      <Moon className="w-3.5 h-3.5 text-indigo-600" />
-                    )}
-                    <span>
-                      График 2/2 врача ({selectedDoctorProfile.name.split(' ')[0]} · Бригада №
-                      {selectedDoctorProfile.brigade} · Смена {selectedDoctorProfile.shiftHours}):
-                    </span>
-                  </div>
-                  <span
-                    className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                      doctorShiftInfo.isWorkingOnDate
-                        ? 'bg-emerald-100 text-emerald-800'
-                        : 'bg-amber-100 text-amber-900'
-                    }`}
-                  >
-                    {doctorShiftInfo.isWorkingOnDate
-                      ? `На смене (${doctorShiftInfo.shiftHours})`
-                      : 'Выходной по графику 2/2 (доступна запись по брони)'}
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-7 gap-1.5">
-                  {doctor7DaySchedule.map((day) => {
-                    const isSelectedDate = day.iso === preferredDate;
-                    return (
-                      <button
-                        key={day.iso}
-                        type="button"
-                        onClick={() => setPreferredDate(day.iso)}
-                        className={`p-1.5 rounded-lg border text-center transition-all cursor-pointer ${
-                          isSelectedDate
-                            ? 'bg-[#0F2922] text-white border-[#0F2922] shadow-xs'
-                            : day.isWorking
-                            ? 'bg-white border-emerald-300 text-[#122B24] hover:bg-emerald-50'
-                            : 'bg-[#FCFBF7] border-amber-200 text-[#35524A] hover:bg-amber-50/60'
-                        }`}
-                      >
-                        <div className="text-[10px] font-bold truncate">{day.dayLabel}</div>
-                        <div
-                          className={`text-[9px] font-extrabold mt-0.5 rounded px-1 py-0.5 ${
-                            isSelectedDate
-                              ? 'bg-white/15 text-[#5EEAD4]'
-                              : day.isWorking
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : 'bg-amber-100/80 text-amber-800'
-                          }`}
-                        >
-                          {day.isWorking
-                            ? day.shiftType === 'day'
-                              ? '10–20'
-                              : '20–10'
-                            : 'Бронь'}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Off-Day Advance Booking Banner ("По брони") */}
-            {isBookingOnDoctorOffDay && selectedDoctorProfile && (
-              <div className="rounded-xl bg-amber-50 border border-amber-300 p-3.5 space-y-2 text-xs text-amber-950">
-                <div className="flex items-start gap-2">
-                  <BookmarkCheck className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+            {/* Sick Leave / Vacation / Conference Alert Banner with 1-Click Switch to Replacement Doctor */}
+            {isDoctorAbsentOnSelectedDate && selectedDoctorProfile && (
+              <div className="rounded-xl bg-rose-50 border-2 border-rose-300 p-4 space-y-2.5 text-xs text-rose-950">
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
                   <div>
-                    <div className="font-bold">
-                      На {preferredDate} у врача «{selectedDoctorProfile.name}» выходной по графику 2/2
+                    <div className="font-extrabold text-sm">
+                      На дату {preferredDate} врач «{selectedDoctorProfile.name}» не ведет прием
                     </div>
-                    <p className="text-[11px] text-amber-900 mt-0.5 leading-relaxed">
-                      Вы можете оформить <strong>предварительную запись по брони</strong> на этот день (регистратор согласует резерв), либо в 1 клик выбрать ближайшую рабочую смену этого врача:
+                    <p className="text-[11px] text-rose-900 mt-1 leading-relaxed">
+                      В этот день прием по данному профилю ведет профильный специалист:{' '}
+                      <strong>
+                        {doctorShiftInfo.replacementDoctorName || 'Дежурный специалист клиники'}
+                      </strong>
+                      . Вы можете переключиться на него в 1 клик или выбрать другую доступную дату:
                     </p>
                   </div>
                 </div>
-                {nextWorkingDates.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                    <span className="text-[11px] font-semibold text-amber-900">
-                      Ближайшие рабочие смены ({selectedDoctorProfile.shiftHours}):
-                    </span>
-                    {nextWorkingDates.map((wDate) => (
-                      <button
-                        key={wDate}
-                        type="button"
-                        onClick={() => setPreferredDate(wDate)}
-                        className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold tabular-nums cursor-pointer transition-snappy"
-                      >
-                        Переключить на {wDate}
-                      </button>
-                    ))}
-                  </div>
-                )}
+
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  {doctorShiftInfo.replacementDoctorName && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedDoctor(doctorShiftInfo.replacementDoctorName!);
+                        setErrorMessage('');
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-[#0D9488] hover:bg-[#0F766E] text-white text-xs font-extrabold cursor-pointer transition-snappy shadow-xs"
+                    >
+                      Записаться к специалисту: {doctorShiftInfo.replacementDoctorName}
+                    </button>
+                  )}
+                  {nextWorkingDates.map((wDate) => (
+                    <button
+                      key={wDate}
+                      type="button"
+                      onClick={() => {
+                        setPreferredDate(wDate);
+                        setErrorMessage('');
+                      }}
+                      className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-rose-100 border border-rose-300 text-rose-900 text-[11px] font-bold tabular-nums cursor-pointer transition-snappy"
+                    >
+                      Выбрать дату: {wDate}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -849,7 +770,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-2">
                 <label className="block text-xs font-semibold text-[#122B24]">
-                  Индивидуальное время врача ({doctorShiftInfo.shiftHours}) *
+                  Доступное время приема врача *
                 </label>
                 <span className="text-[11px] text-[#35524A]">
                   Забронированные часы подписаны как «Занято»
@@ -887,11 +808,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                             : 'text-[#0F766E]'
                         }`}
                       >
-                        {isOccupied
-                          ? 'Занято'
-                          : isBookingOnDoctorOffDay
-                          ? 'По брони'
-                          : 'Свободно'}
+                        {isOccupied ? 'Занято' : 'Свободно'}
                       </div>
                     </button>
                   );
@@ -959,9 +876,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 type="submit"
                 className="w-full py-3.5 px-6 rounded-xl bg-[#F97316] hover:bg-[#EA580C] text-white font-semibold text-sm shadow-md transition-snappy whitespace-nowrap cursor-pointer"
               >
-                {isBookingOnDoctorOffDay
-                  ? `Оформить запись по брони (${preferredDate} в ${preferredTime})`
-                  : `Подтвердить запись на прием (${preferredDate} в ${preferredTime})`}
+                Подтвердить запись на прием ({preferredDate} в {preferredTime})
               </button>
               <div className="flex items-center justify-center gap-2 mt-3 text-xs text-[#35524A]">
                 <ShieldCheck className="w-4 h-4 text-[#0D9488] shrink-0" />

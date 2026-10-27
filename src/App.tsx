@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   ArrowRight,
-  Award,
   Calculator,
   Calendar,
   Check,
@@ -14,7 +13,6 @@ import {
   MapPin,
   Menu,
   MessageSquarePlus,
-  Moon,
   Navigation,
   PawPrint,
   Phone,
@@ -24,7 +22,6 @@ import {
   Sparkles,
   Star,
   Stethoscope,
-  Sun,
   UserCheck,
   X,
 } from 'lucide-react';
@@ -34,13 +31,12 @@ import {
   CALCULATOR_PACKAGES,
   CLINIC_INFO,
   createRandomClientAppointments,
+  DEFAULT_DOCTOR_STATUS_EVENTS,
   DEFAULT_SHIFT_SCHEDULE_CONFIG,
   DoctorProfile,
   DOCTORS_DATA,
   EMERGENCY_SYMPTOMS,
   FAQ_DATA,
-  getDoctorShiftForDate,
-  getDutyBrigadeForDate,
   getReviewSpeciesCategory,
   INITIAL_APPOINTMENTS_DATA,
   PET_AGE_CONFIG,
@@ -132,13 +128,13 @@ function mergeDoctorsWithDefaults(list: DoctorProfile[]): DoctorProfile[] {
 const HERO_STATS = [
   {
     value: '24/7',
-    label: 'График 2/2 (День и Ночь)',
-    detail: 'Дневная смена 10:00–20:00 и ночная 20:00–10:00',
+    label: 'Круглосуточный прием',
+    detail: 'Стационар интенсивной терапии, УЗИ и лаборатория без выходных',
   },
   {
     value: '8 врачей',
-    label: 'Две дежурные бригады',
-    detail: 'К каждому направлению и чек-апу прикреплен свой врач',
+    label: 'Узкие специалисты',
+    detail: 'К каждому направлению и чек-апу прикреплен профильный врач',
   },
   {
     value: '99.4%',
@@ -159,9 +155,9 @@ const TRUST_BADGES = [
       'Раздельные зоны ожидания и стационары для кошек, собак и мелких грызунов без пересечения запахов.',
   },
   {
-    title: 'Индивидуальные слоты каждого врача',
+    title: 'Индивидуальные окна записи к врачу',
     description:
-      'При выборе врача отображаются только его личные часы приема. Занятое время блокируется, а в выходные доступна бронь.',
+      'При выборе специалиста отображаются только его свободные часы приема, а занятые окна автоматически блокируются.',
   },
   {
     title: 'Закрепленный врач за каждым направлением',
@@ -169,9 +165,9 @@ const TRUST_BADGES = [
       'У терапии, хирургии, кардиологии, ратологии и каждого чек-апа есть ведущий специалист, которого можно сменить в 1 клик.',
   },
   {
-    title: 'График 2 через 2 (10:00–20:00 и 20:00–10:00)',
+    title: 'Собственная экспресс-лаборатория CITO',
     description:
-      'В клинике работают 2 бригады по 4 специалиста: дневные и ночные врачи обеспечивают круглосуточный прием.',
+      'Общий и биохимический анализы крови, УЗИ брюшной полости и ЭхоКГ выполняются прямо во время приема за 15–20 минут.',
   },
 ];
 
@@ -203,14 +199,22 @@ export function App() {
     }, 4500);
   };
 
-  // Shift Schedule Config (2/2 brigades, day 10-20 & night 20-10)
+  // Shift Schedule Config (2/2 brigades, day 10-20 & night 20-10 + sick leaves/vacations/replacements)
   const [shiftConfig, setShiftConfig] = useState<ShiftScheduleConfig>(() => {
     try {
       const raw = localStorage.getItem(SHIFT_CONFIG_STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed === 'object' && parsed.anchorDate) {
-          return parsed;
+          return {
+            ...DEFAULT_SHIFT_SCHEDULE_CONFIG,
+            ...parsed,
+            doctorStatusEvents:
+              Array.isArray(parsed.doctorStatusEvents) &&
+              parsed.doctorStatusEvents.length > 0
+                ? parsed.doctorStatusEvents
+                : DEFAULT_DOCTOR_STATUS_EVENTS,
+          };
         }
       }
     } catch {
@@ -262,9 +266,6 @@ export function App() {
   // Services filter & search state
   const [activeCategory, setActiveCategory] = useState<ServiceCategory>('all');
   const [serviceSearch, setServiceSearch] = useState('');
-
-  // Doctors filter state
-  const [doctorBrigadeFilter, setDoctorBrigadeFilter] = useState<'all' | '1' | '2' | 'day' | 'night'>('all');
 
   // Calculator state
   const [calcPetType, setCalcPetType] = useState<PetType>('dog');
@@ -1037,65 +1038,15 @@ export function App() {
     ).length;
   }, [appointments, currentUser, isUserDoctor]);
 
-  const todayDateStr = useMemo(() => new Date().toISOString().split('T')[0], []);
-
-  const todayDutyBrigade = useMemo(
-    () => getDutyBrigadeForDate(todayDateStr, shiftConfig),
-    [todayDateStr, shiftConfig]
-  );
-
-  const todayDutyDoctors = useMemo(
-    () => doctorsList.filter((d) => (d.brigade || 1) === todayDutyBrigade),
-    [doctorsList, todayDutyBrigade]
-  );
-
-  const filteredDoctors = useMemo(() => {
-    return doctorsList.filter((doc) => {
-      if (doctorBrigadeFilter === '1') return (doc.brigade || 1) === 1;
-      if (doctorBrigadeFilter === '2') return doc.brigade === 2;
-      if (doctorBrigadeFilter === 'day') return (doc.shiftType || 'day') === 'day';
-      if (doctorBrigadeFilter === 'night') return doc.shiftType === 'night';
-      return true;
-    });
-  }, [doctorsList, doctorBrigadeFilter]);
-
-  // 10-day visual 2/2 schedule dates
-  const scheduleDates = useMemo(() => {
-    const list: { dateStr: string; label: string; weekday: string; brigade: 1 | 2 }[] = [];
-    const base = new Date();
-    for (let i = 0; i < 10; i++) {
-      const d = new Date(base);
-      d.setDate(base.getDate() + i);
-      const iso = d.toISOString().split('T')[0];
-      const label = d.toLocaleDateString('ru-RU', {
-        day: '2-digit',
-        month: '2-digit',
-      });
-      const weekday =
-        i === 0
-          ? 'Сегодня'
-          : i === 1
-          ? 'Завтра'
-          : d.toLocaleDateString('ru-RU', { weekday: 'short' });
-      list.push({
-        dateStr: iso,
-        label,
-        weekday,
-        brigade: getDutyBrigadeForDate(iso, shiftConfig),
-      });
-    }
-    return list;
-  }, [shiftConfig]);
-
   return (
-    <div className="min-h-screen flex flex-col bg-[#EAF2EE] text-[#132A23] selection:bg-[#0D9488] selection:text-white">
+    <div className="min-h-screen w-full overflow-x-hidden flex flex-col bg-[#EAF2EE] text-[#132A23] selection:bg-[#0D9488] selection:text-white">
       {/* Top Emergency & Address Bar */}
       <div className="bg-[#0F2922] text-white/90 text-xs border-b border-white/10">
-        <div className="max-w-7xl mx-auto px-6 lg:px-8 py-2.5 flex flex-wrap items-center justify-between gap-3">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-4 sm:gap-6">
             <span className="inline-flex items-center gap-2 font-medium text-[#5EEAD4]">
               <span className="w-2 h-2 rounded-full bg-[#10B981] animate-pulse" />
-              {CLINIC_INFO.schedule} · Дежурит Бригада №{todayDutyBrigade}
+              {CLINIC_INFO.schedule}
             </span>
             <span className="hidden md:inline-flex items-center gap-1.5 text-white/80">
               <MapPin className="w-3.5 h-3.5 text-[#5EEAD4]" />
@@ -1103,7 +1054,7 @@ export function App() {
             </span>
           </div>
 
-          <div className="flex items-center gap-4 ml-auto">
+          <div className="flex flex-wrap items-center gap-3 sm:gap-4 ml-auto">
             {isUserAdmin && (
               <button
                 type="button"
@@ -1168,50 +1119,50 @@ export function App() {
 
       {/* Sticky Main Header */}
       <header className="sticky top-0 z-40 bg-[#EAF2EE]/95 backdrop-blur-md border-b border-[#CFE2DA]">
-        <div className="max-w-7xl mx-auto px-6 lg:px-8 h-20 flex items-center justify-between gap-4">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between gap-3">
           {/* Brand Logo */}
           <a
             href="#"
-            className="flex items-center gap-3 group focus:outline-none"
+            className="flex items-center gap-2.5 group focus:outline-none shrink-0"
           >
-            <div className="w-11 h-11 rounded-xl bg-[#0D9488] text-white flex items-center justify-center shadow-sm group-hover:bg-[#0F766E] transition-snappy">
-              <PawPrint className="w-6 h-6" />
+            <div className="w-10 h-10 rounded-xl bg-[#0D9488] text-white flex items-center justify-center shadow-sm group-hover:bg-[#0F766E] transition-snappy shrink-0">
+              <PawPrint className="w-5 h-5" />
             </div>
             <div>
-              <div className="font-extrabold text-lg leading-none text-[#132A23] tracking-tight">
+              <div className="font-extrabold text-base sm:text-lg leading-none text-[#132A23] tracking-tight whitespace-nowrap">
                 {CLINIC_INFO.name}
               </div>
-              <div className="text-xs text-[#3D5B52] mt-1 font-medium">
+              <div className="text-[11px] text-[#3D5B52] mt-1 font-medium whitespace-nowrap">
                 Ветеринарный центр · {CLINIC_INFO.city}
               </div>
             </div>
           </a>
 
           {/* Desktop Navigation */}
-          <nav className="hidden xl:flex items-center gap-6 text-sm font-semibold text-[#3D5B52]">
+          <nav className="hidden xl:flex items-center gap-4 2xl:gap-6 text-xs 2xl:text-sm font-semibold text-[#3D5B52] min-w-0">
             <a
               href="#services"
               className="hover:text-[#0D9488] transition-snappy whitespace-nowrap"
             >
-              Услуги и врачи направлений
+              Услуги и цены
             </a>
             <a
               href="#calculator"
               className="hover:text-[#0D9488] transition-snappy whitespace-nowrap"
             >
-              Калькулятор чек-апа
+              Калькулятор
             </a>
             <a
               href="#doctors"
               className="hover:text-[#0D9488] transition-snappy whitespace-nowrap"
             >
-              Врачи и график 2/2 ({doctorsList.length})
+              Врачи ({doctorsList.length})
             </a>
             <a
               href="#reviews"
               className="hover:text-[#0D9488] transition-snappy whitespace-nowrap"
             >
-              Истории пациентов ({reviews.length})
+              Отзывы ({reviews.length})
             </a>
             <a
               href="#contacts"
@@ -1222,7 +1173,7 @@ export function App() {
           </nav>
 
           {/* Actions & Role Auth Controls */}
-          <div className="hidden lg:flex items-center gap-2.5 shrink-0">
+          <div className="hidden lg:flex items-center gap-2 shrink-0">
             <button
               type="button"
               onClick={() => {
@@ -1230,7 +1181,7 @@ export function App() {
                 setAuthReasonMessage(undefined);
                 setAuthModalOpen(true);
               }}
-              className={`py-2.5 px-3.5 rounded-xl border text-xs font-bold inline-flex items-center gap-2 transition-snappy whitespace-nowrap cursor-pointer ${
+              className={`py-2 px-3 rounded-xl border text-xs font-bold inline-flex items-center gap-1.5 transition-snappy whitespace-nowrap cursor-pointer ${
                 isUserAdmin
                   ? 'bg-[#0F2922] text-white border-[#0F2922] hover:bg-[#1E3F36]'
                   : currentUser.authSource !== 'guest'
@@ -1244,9 +1195,9 @@ export function App() {
                   <img
                     src={currentUser.photoURL}
                     alt={currentUser.displayName}
-                    className="w-5 h-5 rounded-full object-cover"
+                    className="w-5 h-5 rounded-full object-cover shrink-0"
                   />
-                  <span className="max-w-[110px] truncate">
+                  <span className="max-w-[96px] truncate">
                     {currentUser.displayName}
                   </span>
                   <span
@@ -1264,7 +1215,7 @@ export function App() {
               ) : (
                 <>
                   <LogIn className="w-4 h-4 text-[#0D9488]" />
-                  <span>Войти / Быстрый выбор</span>
+                  <span>Войти</span>
                 </>
               )}
             </button>
@@ -1273,7 +1224,7 @@ export function App() {
               <button
                 type="button"
                 onClick={() => setAdminDashboardOpen(true)}
-                className="py-2.5 px-3.5 rounded-xl bg-[#0D9488] hover:bg-[#0F766E] text-white text-xs font-bold inline-flex items-center gap-1.5 transition-snappy whitespace-nowrap cursor-pointer shadow-xs"
+                className="py-2 px-3 rounded-xl bg-[#0D9488] hover:bg-[#0F766E] text-white text-xs font-bold inline-flex items-center gap-1.5 transition-snappy whitespace-nowrap cursor-pointer shadow-xs"
               >
                 <ShieldCheck className="w-4 h-4" />
                 <span>Управление</span>
@@ -1284,7 +1235,7 @@ export function App() {
               <button
                 type="button"
                 onClick={() => setDoctorDashboardOpen(true)}
-                className="py-2.5 px-3.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold inline-flex items-center gap-1.5 transition-snappy whitespace-nowrap cursor-pointer shadow-xs"
+                className="py-2 px-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold inline-flex items-center gap-1.5 transition-snappy whitespace-nowrap cursor-pointer shadow-xs"
               >
                 <Stethoscope className="w-4 h-4" />
                 <span>Кабинет врача ({doctorAppointmentsCount})</span>
@@ -1295,7 +1246,7 @@ export function App() {
               <button
                 type="button"
                 onClick={() => setSavedAppointmentsModalOpen(true)}
-                className="py-2.5 px-3.5 rounded-xl bg-[#FCFBF7] border border-[#CFE2DA] hover:border-[#0D9488] text-xs font-bold text-[#132A23] inline-flex items-center gap-2 transition-snappy whitespace-nowrap cursor-pointer"
+                className="py-2 px-3 rounded-xl bg-[#FCFBF7] border border-[#CFE2DA] hover:border-[#0D9488] text-xs font-bold text-[#132A23] inline-flex items-center gap-1.5 transition-snappy whitespace-nowrap cursor-pointer"
               >
                 <Calendar className="w-4 h-4 text-[#0D9488]" />
                 <span>Кабинет</span>
@@ -1308,7 +1259,7 @@ export function App() {
             <button
               type="button"
               onClick={() => openBookingWithContext()}
-              className="py-2.5 px-5 rounded-xl bg-[#F97316] hover:bg-[#EA580C] text-white font-bold text-sm shadow-sm hover:shadow transition-snappy inline-flex items-center gap-2 whitespace-nowrap cursor-pointer"
+              className="py-2 px-4 rounded-xl bg-[#F97316] hover:bg-[#EA580C] text-white font-bold text-xs sm:text-sm shadow-sm hover:shadow transition-snappy inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
             >
               <span>Записаться на прием</span>
             </button>
@@ -1386,7 +1337,7 @@ export function App() {
                 onClick={() => setMobileMenuOpen(false)}
                 className="py-1.5 hover:text-[#0D9488]"
               >
-                Команда врачей и график 2/2 ({doctorsList.length})
+                Команда врачей ({doctorsList.length})
               </a>
               <a
                 href="#reviews"
@@ -1525,7 +1476,7 @@ export function App() {
               <div className="lg:col-span-7 space-y-6">
                 <div className="inline-flex items-center gap-2.5 px-3.5 py-1.5 rounded-lg bg-[#DFECE6] border border-[#0D9488]/25 text-[#0F766E] text-xs font-bold tracking-wide">
                   <ShieldCheck className="w-4 h-4 text-[#0D9488]" />
-                  <span>ДОКАЗАТЕЛЬНАЯ ВЕТЕРИНАРИЯ БЕЗ СТРЕССА · ГРАФИК 2/2 (10:00–20:00 И 20:00–10:00)</span>
+                  <span>ДОКАЗАТЕЛЬНАЯ ВЕТЕРИНАРИЯ БЕЗ СТРЕССА · КРУГЛОСУТОЧНЫЙ ГОСПИТАЛЬ 24/7</span>
                 </div>
 
                 <h1
@@ -1536,7 +1487,7 @@ export function App() {
                 </h1>
 
                 <p className="text-base sm:text-lg text-[#3D5B52] leading-relaxed max-w-[62ch]">
-                  Круглосуточный ветеринарный госпиталь ({CLINIC_INFO.address}). 8 узкопрофильных специалистов в 2 дежурных бригадах, персональные слоты приема у каждого врача и запись по брони на любой день.
+                  Круглосуточный ветеринарный госпиталь ({CLINIC_INFO.address}). 8 узкопрофильных специалистов, собственная экспресс-лаборатория, эндоскопическая операционная и индивидуальная онлайн-запись к профильному врачу.
                 </p>
 
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3.5 pt-1">
@@ -1566,7 +1517,7 @@ export function App() {
                       Экспресс-запись дежурному врачу (перезвоним за 10 минут)
                     </span>
                     <span className="text-xs font-semibold text-[#3D5B52] hidden sm:inline">
-                      Дежурит Бригада №{todayDutyBrigade}
+                      Прием без очередей 24/7
                     </span>
                   </div>
 
@@ -1669,7 +1620,7 @@ export function App() {
                       Стандарт Fear Free (прием без страха)
                     </span>
                     <span className="px-3 py-1.5 rounded-lg bg-[#FCFBF7]/95 text-[#132A23] text-xs font-extrabold tabular-nums shadow-xs">
-                      ★ 4.9 · 1 420+ отзывов
+                      Рейтинг 4.9 · 1 420+ отзывов
                     </span>
                   </div>
 
@@ -1678,20 +1629,13 @@ export function App() {
                       <div>
                         <div className="text-xs font-bold uppercase tracking-wider text-[#0D9488] flex items-center gap-1.5">
                           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                          <span>Дежурная бригада сегодня · Бригада №{todayDutyBrigade}</span>
+                          <span>Профильные специалисты и диагностика 24/7</span>
                         </div>
                         <div className="text-xs sm:text-sm font-extrabold text-[#132A23] mt-1 leading-snug">
-                          {todayDutyDoctors
-                            .map((d) => {
-                              const parts = d.name.split(' ');
-                              return `${parts[0]} ${parts[1]?.[0] || ''}. (${
-                                d.shiftType === 'night' ? '20–10' : '10–20'
-                              })`;
-                            })
-                            .join(' · ')}
+                          Терапия · Кардиология · Хирургия · УЗИ · Ратология · ОРИТ
                         </div>
                         <div className="text-[11px] text-[#3D5B52] mt-1">
-                          Дневная смена 10:00–20:00 и ночная смена 20:00–10:00 · остальные врачи доступны по брони
+                          К каждому направлению и чек-апу прикреплен ведущий профильный врач
                         </div>
                       </div>
                       <button
@@ -1830,13 +1774,6 @@ export function App() {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {filteredServices.map((service) => {
-                  const assignedDocObj = doctorsList.find(
-                    (d) => d.name === service.defaultDoctorName
-                  );
-                  const shiftToday = assignedDocObj
-                    ? getDoctorShiftForDate(assignedDocObj, todayDateStr, shiftConfig)
-                    : null;
-
                   return (
                     <div
                       key={service.id}
@@ -1872,19 +1809,6 @@ export function App() {
                               <Stethoscope className="w-3.5 h-3.5 text-[#0D9488]" />
                               Закрепленный специалист:
                             </span>
-                            {shiftToday && (
-                              <span
-                                className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                                  shiftToday.isWorking
-                                    ? 'bg-emerald-100 text-emerald-800'
-                                    : 'bg-amber-100 text-amber-800'
-                                }`}
-                              >
-                                {shiftToday.isWorking
-                                  ? `Сегодня: ${shiftToday.shiftHours}`
-                                  : 'Под запись (по брони)'}
-                              </span>
-                            )}
                           </div>
                           <div className="text-xs font-extrabold text-[#132A23] mt-1">
                             {service.defaultDoctorName || 'Волкова Елена Сергеевна'}
@@ -2146,8 +2070,7 @@ export function App() {
                             value={doc.name}
                             className="text-[#132A23] bg-[#FCFBF7]"
                           >
-                            {doc.name} — {doc.role} (Бригада №{doc.brigade || 1},{' '}
-                            {doc.shiftHours || '10:00–20:00'})
+                            {doc.name} — {doc.role}
                           </option>
                         ))}
                       </select>
@@ -2198,19 +2121,19 @@ export function App() {
           </div>
         </section>
 
-        {/* DOCTORS & 2/2 SHIFT SCHEDULE SECTION */}
+        {/* DOCTORS SECTION */}
         <section id="doctors" className="py-16 lg:py-24 border-b border-[#CFE2DA] bg-[#EAF2EE]">
           <div className="max-w-7xl mx-auto px-6 lg:px-8">
             <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-10">
               <div>
                 <div className="text-xs font-bold uppercase tracking-wider text-[#0D9488] mb-2">
-                  8 профильных врачей · 2 бригады · Смены 10:00–20:00 и 20:00–10:00
+                  8 узкопрофильных специалистов · Доказательная медицина
                 </div>
                 <h2
                   className="font-extrabold text-[#132A23] tracking-tight"
                   style={{ fontSize: 'clamp(1.75rem, 2.6vw + 0.4rem, 2.5rem)' }}
                 >
-                  Команда врачей и график смен 2 через 2
+                  Команда ветеринарных врачей
                 </h2>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -2221,188 +2144,24 @@ export function App() {
                     className="py-2.5 px-4 rounded-xl bg-[#0F2922] text-white text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
                   >
                     <ShieldCheck className="w-4 h-4 text-[#5EEAD4]" />
-                    <span>Настроить дежурную бригаду (Админ)</span>
+                    <span>Управление штатом и расписанием (Админ)</span>
+                  </button>
+                )}
+                {isUserDoctor && (
+                  <button
+                    type="button"
+                    onClick={() => setDoctorDashboardOpen(true)}
+                    className="py-2.5 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Stethoscope className="w-4 h-4" />
+                    <span>Служебный график врачей (Кабинет врача)</span>
                   </button>
                 )}
               </div>
             </div>
 
-            {/* VISUAL 10-DAY 2/2 SCHEDULE TABLE */}
-            <div className="rounded-2xl bg-[#FCFBF7] border border-[#CFE2DA] p-5 sm:p-6 mb-10 shadow-xs">
-              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-4">
-                <div>
-                  <div className="inline-flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider text-[#0D9488]">
-                    <Calendar className="w-4 h-4" />
-                    <span>
-                      Актуальный график дежурств (режим:{' '}
-                      {shiftConfig.rotationMode === 'daily'
-                        ? 'Ежедневная смена бригад'
-                        : 'График 2 через 2'}
-                      )
-                    </span>
-                  </div>
-                  <h3 className="text-base sm:text-lg font-extrabold text-[#132A23] mt-0.5">
-                    Расписание работы бригад и врачей на ближайшие 10 дней
-                  </h3>
-                  <p className="text-xs text-[#3D5B52] mt-0.5">
-                    Нажмите на любую ячейку смены или выходного дня, чтобы сразу записаться к выбранному врачу на эту дату (в выходной день действует предварительная запись по брони).
-                  </p>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold">
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-900">
-                    <Sun className="w-3.5 h-3.5 text-amber-600" />
-                    Дневная: 10:00–20:00
-                  </span>
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-100 text-indigo-900">
-                    <Moon className="w-3.5 h-3.5 text-indigo-700" />
-                    Ночная: 20:00–10:00
-                  </span>
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200">
-                    Выходной: доступно по брони
-                  </span>
-                </div>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse min-w-[820px]">
-                  <thead>
-                    <tr className="border-b border-[#CFE2DA] text-[11px] text-[#3D5B52]">
-                      <th className="py-2.5 px-3 font-extrabold text-[#132A23] w-60">
-                        Специалист / Бригада и смена
-                      </th>
-                      {scheduleDates.map((d) => (
-                        <th
-                          key={d.dateStr}
-                          className={`py-2 px-2 text-center font-bold rounded-t-lg ${
-                            d.dateStr === todayDateStr ? 'bg-[#DFECE6]' : ''
-                          }`}
-                        >
-                          <div className="text-[10px] uppercase text-[#3D5B52]">
-                            {d.weekday}
-                          </div>
-                          <div className="text-xs font-extrabold text-[#132A23] tabular-nums">
-                            {d.label}
-                          </div>
-                          <div
-                            className={`mt-1 inline-block px-1.5 py-0.5 rounded text-[9px] font-extrabold ${
-                              d.brigade === 1
-                                ? 'bg-[#0D9488] text-white'
-                                : 'bg-indigo-600 text-white'
-                            }`}
-                          >
-                            Бригада №{d.brigade}
-                          </div>
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#CFE2DA]/70 text-xs">
-                    {doctorsList.map((doc) => (
-                      <tr key={doc.id} className="hover:bg-[#EAF2EE]/50">
-                        <td className="py-2.5 px-3">
-                          <div className="font-extrabold text-[#132A23] truncate max-w-[220px]">
-                            {doc.name}
-                          </div>
-                          <div className="flex items-center gap-1.5 mt-0.5 text-[10px] font-bold">
-                            <span
-                              className={`px-1.5 py-0.5 rounded ${
-                                (doc.brigade || 1) === 1
-                                  ? 'bg-[#DFECE6] text-[#0F766E]'
-                                  : 'bg-indigo-50 text-indigo-800'
-                              }`}
-                            >
-                              Бригада №{doc.brigade || 1}
-                            </span>
-                            <span className="text-[#3D5B52]">
-                              {doc.shiftType === 'night'
-                                ? '🌙 20:00–10:00'
-                                : '☀ 10:00–20:00'}
-                            </span>
-                          </div>
-                        </td>
-                        {scheduleDates.map((d) => {
-                          const st = getDoctorShiftForDate(doc, d.dateStr, shiftConfig);
-                          return (
-                            <td
-                              key={d.dateStr}
-                              className={`p-1.5 text-center ${
-                                d.dateStr === todayDateStr ? 'bg-[#DFECE6]/40' : ''
-                              }`}
-                            >
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  openBookingWithContext({
-                                    doctorName: doc.name,
-                                    date: d.dateStr,
-                                  })
-                                }
-                                title={`Записаться к врачу ${doc.name} на ${d.label}`}
-                                className={`w-full py-1.5 px-1 rounded-lg text-[10px] font-bold transition-snappy cursor-pointer border ${
-                                  st.isWorking
-                                    ? doc.shiftType === 'night'
-                                      ? 'bg-indigo-100/90 hover:bg-indigo-600 text-indigo-950 hover:text-white border-indigo-200'
-                                      : 'bg-emerald-100/90 hover:bg-[#0D9488] text-emerald-950 hover:text-white border-emerald-200'
-                                    : 'bg-amber-50/70 hover:bg-amber-500 text-amber-800 hover:text-white border-amber-200/70'
-                                }`}
-                              >
-                                {st.isWorking ? (
-                                  <>
-                                    <div>{doc.shiftType === 'night' ? '🌙 Ночь' : '☀ День'}</div>
-                                    <div className="text-[9px] opacity-85 tabular-nums">
-                                      {st.shiftHours}
-                                    </div>
-                                  </>
-                                ) : (
-                                  <>
-                                    <div>Выходной</div>
-                                    <div className="text-[9px] opacity-80">По брони</div>
-                                  </>
-                                )}
-                              </button>
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* Brigade & Shift Filter Bar */}
-            <div className="flex flex-wrap items-center gap-2 mb-8">
-              {(
-                [
-                  { id: 'all', label: `Все врачи клиники (${doctorsList.length})` },
-                  { id: '1', label: 'Бригада №1 (4 врача)' },
-                  { id: '2', label: 'Бригада №2 (4 врача)' },
-                  { id: 'day', label: '☀ Дневная смена 10:00–20:00' },
-                  { id: 'night', label: '🌙 Ночная смена 20:00–10:00' },
-                ] as const
-              ).map((tab) => {
-                const active = doctorBrigadeFilter === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    onClick={() => setDoctorBrigadeFilter(tab.id)}
-                    className={`py-2 px-4 rounded-xl text-xs font-bold transition-snappy cursor-pointer ${
-                      active
-                        ? 'bg-[#0D9488] text-white shadow-xs'
-                        : 'bg-[#FCFBF7] text-[#3D5B52] border border-[#CFE2DA] hover:border-[#0D9488] hover:text-[#132A23]'
-                    }`}
-                  >
-                    {tab.label}
-                  </button>
-                );
-              })}
-            </div>
-
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              {filteredDoctors.map((doc) => {
-                const todayShift = getDoctorShiftForDate(doc, todayDateStr, shiftConfig);
+              {doctorsList.map((doc) => {
                 return (
                   <div
                     key={doc.id}
@@ -2419,27 +2178,8 @@ export function App() {
                           <span className="px-2.5 py-1 rounded-lg bg-[#0F2922]/85 backdrop-blur-xs text-white text-[11px] font-bold tabular-nums">
                             Стаж {doc.experienceYears} лет
                           </span>
-                          <span
-                            className={`px-2.5 py-1 rounded-lg text-[11px] font-extrabold ${
-                              (doc.brigade || 1) === 1
-                                ? 'bg-[#0D9488] text-white'
-                                : 'bg-indigo-600 text-white'
-                            }`}
-                          >
-                            Бригада №{doc.brigade || 1}
-                          </span>
-                        </div>
-                        <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between gap-1.5">
-                          <span
-                            className={`px-2.5 py-1 rounded-lg text-[11px] font-bold backdrop-blur-md ${
-                              todayShift.isWorking
-                                ? 'bg-emerald-900/90 text-emerald-100'
-                                : 'bg-amber-900/90 text-amber-100'
-                            }`}
-                          >
-                            {todayShift.isWorking
-                              ? `Сегодня на смене (${todayShift.shiftHours})`
-                              : 'Сегодня выходной · запись по брони'}
+                          <span className="px-2.5 py-1 rounded-lg bg-[#0D9488] text-white text-[11px] font-extrabold">
+                            {doc.operationsCount}
                           </span>
                         </div>
                       </div>
@@ -2451,24 +2191,6 @@ export function App() {
                         <h3 className="text-lg font-extrabold text-[#132A23] mb-2">
                           {doc.name}
                         </h3>
-
-                        <div className="text-xs font-semibold text-[#3D5B52] bg-[#EAF2EE] border border-[#CFE2DA] rounded-lg px-3 py-2 mb-3 space-y-1">
-                          <div>
-                            Смена 2/2:{' '}
-                            <strong className="text-[#132A23]">
-                              {doc.shiftType === 'night'
-                                ? 'Ночная (20:00–10:00)'
-                                : 'Дневная (10:00–20:00)'}
-                            </strong>
-                          </div>
-                          <div className="text-[11px]">
-                            Часы приема:{' '}
-                            <span className="font-bold text-[#0F766E] tabular-nums">
-                              {(doc.personalSlots || []).slice(0, 5).join(', ')}
-                              {(doc.personalSlots || []).length > 5 ? '...' : ''}
-                            </span>
-                          </div>
-                        </div>
 
                         <p className="text-xs text-[#3D5B52] mb-3 leading-relaxed">
                           <strong className="text-[#132A23]">Образование:</strong>{' '}
@@ -2502,9 +2224,7 @@ export function App() {
                         }
                         className="w-full py-2.5 px-4 rounded-xl bg-[#0D9488] hover:bg-[#0F766E] text-white font-bold text-xs transition-snappy cursor-pointer"
                       >
-                        {todayShift.isWorking
-                          ? 'Записаться на смене сегодня'
-                          : 'Записаться к врачу (по брони)'}
+                        Записаться к специалисту
                       </button>
                     </div>
                   </div>
@@ -3015,7 +2735,7 @@ export function App() {
                 <div className="relative z-10 flex flex-wrap items-center justify-between gap-4 pt-4 border-t border-white/15 text-xs text-white/75">
                   <span>{CLINIC_INFO.address}</span>
                   <span className="font-semibold text-[#5EEAD4]">
-                    Круглосуточный стационар · График 2/2 (10:00–20:00 и 20:00–10:00)
+                    Круглосуточный стационар · Реанимация и лаборатория 24/7
                   </span>
                 </div>
               </div>
@@ -3154,6 +2874,9 @@ export function App() {
           onUpdateAppointmentRecommendation={handleUpdateAppointmentRecommendation}
           onClaimAppointment={handleUpdateAppointmentDoctor}
           servicesList={servicesList}
+          doctorsList={doctorsList}
+          shiftConfig={shiftConfig}
+          onUpdateShiftConfig={setShiftConfig}
         />
       )}
     </div>

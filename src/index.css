@@ -20,11 +20,13 @@
     scroll-behavior: smooth;
     color: var(--text-primary);
     background-color: var(--background);
+    overflow-x: hidden;
   }
 
   body {
     background-color: var(--background);
     color: var(--text-primary);
+    overflow-x: hidden;
   }
 
   h1, h2, h3, h4 {

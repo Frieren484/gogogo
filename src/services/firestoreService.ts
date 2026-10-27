@@ -212,6 +212,12 @@ export function sanitizeAppointmentForFirestore(
     notes: clampString(item.notes ?? '', 2000, ''),
     ownerUid: clampString(item.ownerUid ?? '', 128, ''),
     doctorRecommendation: clampString(item.doctorRecommendation ?? '', 3000, ''),
+    ...(item.preferredTimeSlot
+      ? { preferredTimeSlot: clampString(item.preferredTimeSlot, 32, '10:00') }
+      : {}),
+    ...(typeof item.isOffShiftBooking === 'boolean'
+      ? { isOffShiftBooking: item.isOffShiftBooking }
+      : {}),
   };
 
   return result;

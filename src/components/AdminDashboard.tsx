@@ -35,12 +35,17 @@ import {
   X,
 } from 'lucide-react';
 import {
+  addDaysToIso,
   AppointmentRecord,
   AppointmentStatus,
   CLINIC_INFO,
   createRandomClientAppointments,
+  DEFAULT_DOCTOR_STATUS_EVENTS,
   DEFAULT_SHIFT_SCHEDULE_CONFIG,
   DoctorProfile,
+  DoctorSpecialStatusType,
+  DoctorStatusEvent,
+  getActiveDoctorStatusEvents,
   getDoctorShiftForDate,
   getDutyBrigadeForDate,
   PetStoryReview,
@@ -209,25 +214,62 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }, 4500);
   };
 
-  // Upcoming 14 days for the interactive brigade shift calendar
+  // Doctor absence / replacement manager state in Admin
+  const [adminCalendarDays, setAdminCalendarDays] = useState<14 | 28>(14);
+  const [newEventDoctor, setNewEventDoctor] = useState<string>(
+    doctors[0]?.name || 'Смирнов Алексей Викторович'
+  );
+  const [newEventType, setNewEventType] = useState<DoctorSpecialStatusType>('sick');
+  const [newEventStart, setNewEventStart] = useState<string>(() =>
+    addDaysToIso(todayIso, 2)
+  );
+  const [newEventEnd, setNewEventEnd] = useState<string>(() =>
+    addDaysToIso(todayIso, 5)
+  );
+  const [newEventReason, setNewEventReason] = useState<string>(
+    'Больничный лист (ОРВИ)'
+  );
+  const [newEventReplacementDoc, setNewEventReplacementDoc] = useState<string>(
+    'Васильев Михаил Юрьевич'
+  );
+
+  const activeDoctorEvents = useMemo(
+    () => getActiveDoctorStatusEvents(shiftConfig),
+    [shiftConfig]
+  );
+
+  // Upcoming 14 or 28 days for the interactive brigade shift calendar
   const upcoming14Days = useMemo(() => {
-    const days: Array<{ iso: string; label: string; weekday: string; brigade: 1 | 2; isManual: boolean }> = [];
+    const days: Array<{
+      iso: string;
+      label: string;
+      weekday: string;
+      brigade: 1 | 2;
+      isManual: boolean;
+    }> = [];
     const base = new Date(`${todayIso}T00:00:00`);
-    for (let i = 0; i < 14; i++) {
+    for (let i = 0; i < adminCalendarDays; i++) {
       const d = new Date(base.getTime() + i * 86400000);
       const iso = d.toISOString().split('T')[0];
       const brigade = getDutyBrigadeForDate(iso, shiftConfig);
-      const isManual = Boolean(shiftConfig.manualOverrides && shiftConfig.manualOverrides[iso]);
+      const isManual = Boolean(
+        shiftConfig.manualOverrides && shiftConfig.manualOverrides[iso]
+      );
       days.push({
         iso,
-        label: i === 0 ? 'Сегодня' : i === 1 ? 'Завтра' : d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }),
+        label:
+          i === 0
+            ? 'Сегодня'
+            : i === 1
+            ? 'Завтра'
+            : d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }),
         weekday: d.toLocaleDateString('ru-RU', { weekday: 'short' }),
         brigade,
         isManual,
       });
     }
     return days;
-  }, [todayIso, shiftConfig]);
+  }, [todayIso, shiftConfig, adminCalendarDays]);
 
   // Filtered appointments for the table AND filtered KPI calculations
   const filteredAppointments = useMemo(() => {
@@ -748,6 +790,39 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         ? `Доступ к Google Drive полностью скрыт от гостей и клиентов (доступен только во вкладке Админ-панели). В ленте историй выздоровления активно ${reviews.length} клинических кейсов.`
         : `Проверка прав доступа: публичный блок Google Drive = ${Boolean(publicDriveElement)}, отзывов = ${reviews.length}.`,
       durationMs: Math.max(1, Math.round(performance.now() - t6Start)),
+    });
+
+    // Test 10: Long-Term 90-Day Schedule, Sick Leaves, Vacations & Automatic Cross-Brigade Replacements
+    const tLongTermStart = performance.now();
+    const eventsList = getActiveDoctorStatusEvents(shiftConfig);
+    const hasSick = eventsList.some((e) => e.type === 'sick');
+    const hasVacation = eventsList.some((e) => e.type === 'vacation');
+    const hasTraining = eventsList.some((e) => e.type === 'training');
+    const sampleSickEvent = eventsList.find((e) => e.type === 'sick');
+    const sickDocObj = doctors.find((d) => d.name === sampleSickEvent?.doctorName);
+    const repDocObj = doctors.find(
+      (d) => d.name === sampleSickEvent?.replacementDoctorName
+    );
+    const sickShiftCheck =
+      sickDocObj && sampleSickEvent
+        ? getDoctorShiftForDate(sickDocObj, sampleSickEvent.startDate, shiftConfig)
+        : null;
+    const longTermPassed =
+      eventsList.length >= 6 &&
+      hasSick &&
+      hasVacation &&
+      hasTraining &&
+      Boolean(sickShiftCheck && sickShiftCheck.isAbsent && repDocObj);
+
+    results.push({
+      id: 'test-long-term-schedule-absences',
+      name: 'Долгосрочное расписание (90+ дней), больничные листы, отпуска и авто-подмена врачей',
+      category: 'График 90 дней и подмены',
+      passed: longTermPassed,
+      details: longTermPassed
+        ? `Активно ${eventsList.length} событий в долгосрочном графике (больничные, отпуска, конференции). При болезни врача (${sampleSickEvent?.doctorName}) его смена автоматически помечается как «Болен» и передается заменяющему специалисту (${sampleSickEvent?.replacementDoctorName}).`
+        : 'Не все типы событий (больничный, отпуск, обучение, замена) настроены в долгосрочном графике.',
+      durationMs: Math.max(1, Math.round(performance.now() - tLongTermStart)),
     });
 
     setTestResults(results);
@@ -2326,15 +2401,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   </div>
                 </div>
 
-                {/* 14-day interactive brigade calendar */}
+                {/* 14/28-day interactive brigade calendar */}
                 <div>
-                  <div className="flex items-center justify-between gap-2 mb-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                     <span className="text-xs font-bold text-[#0F2922]">
-                      Интерактивный календарь дежурств на 14 дней (клик по дате переключает Бригаду №1 ↔ №2):
+                      Интерактивный календарь дежурств на {adminCalendarDays} дней (клик по дате переключает Бригаду №1 ↔ №2):
                     </span>
-                    <span className="text-[11px] text-[#335249]">
-                      Ручных правок: {Object.keys(shiftConfig.manualOverrides || {}).length}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setAdminCalendarDays((prev) => (prev === 14 ? 28 : 14))
+                        }
+                        className="px-2.5 py-1 rounded-lg bg-[#F4FAF8] border border-[#D1EAE4] text-[11px] font-bold text-[#0D9488] cursor-pointer"
+                      >
+                        {adminCalendarDays === 14 ? 'Показать 28 дней' : 'Показать 14 дней'}
+                      </button>
+                      <span className="text-[11px] text-[#335249]">
+                        Ручных правок: {Object.keys(shiftConfig.manualOverrides || {}).length}
+                      </span>
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2">
                     {upcoming14Days.map((d) => (
@@ -2369,6 +2455,349 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       </button>
                     ))}
                   </div>
+                </div>
+
+                {/* Full Visual 8-Doctor 2/2 Schedule Table for Admin */}
+                <div className="pt-4 border-t border-[#D1EAE4]">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                    <div>
+                      <div className="text-xs font-extrabold text-[#0F2922]">
+                        Сводный табель-график врачей (2 через 2 · Смены 10:00–20:00 и 20:00–10:00 · Больничные и подмены)
+                      </div>
+                      <div className="text-[11px] text-[#335249]">
+                        Служебное расписание доступно только Администратору и врачам клиники
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto pb-1">
+                    <table className="w-full text-left border-collapse min-w-[920px] text-[11px]">
+                      <thead>
+                        <tr className="border-b border-[#D1EAE4] text-[#335249]">
+                          <th className="py-2 px-3 font-extrabold text-[#0F2922] min-w-[220px] sticky left-0 bg-white z-10 border-r border-[#D1EAE4]">
+                            Специалист / Бригада и смена
+                          </th>
+                          {upcoming14Days.map((d) => (
+                            <th key={d.iso} className="py-1.5 px-1.5 text-center min-w-[84px]">
+                              <div className="text-[9px] uppercase text-[#335249]">{d.weekday}</div>
+                              <div className="font-extrabold text-[#0F2922] tabular-nums">{d.label}</div>
+                              <div
+                                className={`mt-0.5 inline-block px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                  d.brigade === 1
+                                    ? 'bg-[#0D9488] text-white'
+                                    : 'bg-indigo-600 text-white'
+                                }`}
+                              >
+                                Бр. №{d.brigade}
+                              </div>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#D1EAE4]/60">
+                        {doctors.map((doc) => (
+                          <tr key={doc.id} className="hover:bg-[#F4FAF8]/70">
+                            <td className="py-2 px-3 sticky left-0 z-10 bg-white border-r border-[#D1EAE4]">
+                              <div className="font-extrabold text-[#0F2922] truncate max-w-[210px]">
+                                {doc.name}
+                              </div>
+                              <div className="text-[10px] font-semibold text-[#335249]">
+                                Бригада №{doc.brigade || 1} ·{' '}
+                                {doc.shiftType === 'night' ? 'Ночь 20:00–10:00' : 'День 10:00–20:00'}
+                              </div>
+                            </td>
+                            {upcoming14Days.map((d) => {
+                              const st = getDoctorShiftForDate(doc, d.iso, shiftConfig);
+                              const badgeClass =
+                                st.cellState === 'sick'
+                                  ? 'bg-rose-100 text-rose-900 border-rose-200'
+                                  : st.cellState === 'vacation'
+                                  ? 'bg-sky-100 text-sky-900 border-sky-200'
+                                  : st.cellState === 'training'
+                                  ? 'bg-purple-100 text-purple-900 border-purple-200'
+                                  : st.cellState === 'replacement'
+                                  ? 'bg-teal-100 text-teal-950 border-teal-300'
+                                  : st.isWorking
+                                  ? doc.shiftType === 'night'
+                                    ? 'bg-indigo-100 text-indigo-950 border-indigo-200'
+                                    : 'bg-emerald-100 text-emerald-950 border-emerald-200'
+                                  : 'bg-slate-50 text-slate-500 border-slate-200';
+                              return (
+                                <td key={d.iso} className="p-1 text-center">
+                                  <div
+                                    title={st.statusText}
+                                    className={`py-1 px-1 rounded border text-[10px] font-bold ${badgeClass}`}
+                                  >
+                                    {st.cellState === 'sick'
+                                      ? 'Болен'
+                                      : st.cellState === 'vacation'
+                                      ? 'Отпуск'
+                                      : st.cellState === 'training'
+                                      ? 'Обучение'
+                                      : st.cellState === 'replacement'
+                                      ? 'Замена'
+                                      : st.isWorking
+                                      ? st.shiftHours
+                                      : 'Выходной'}
+                                  </div>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              {/* ADMIN SICK LEAVE, VACATION, CONFERENCE & REPLACEMENT MANAGER (90+ DAYS) */}
+              <div className="bg-white rounded-2xl border border-[#D1EAE4] p-5 space-y-4 shadow-xs text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#D1EAE4] pb-3">
+                  <div>
+                    <div className="text-xs font-extrabold uppercase tracking-wider text-rose-600">
+                      Учет больничных листов, отпусков, стажировок и авто-подмены врачей (на 90+ дней)
+                    </div>
+                    <h4 className="text-sm font-extrabold text-[#0F2922] mt-0.5">
+                      Журнал отсутствий и подмен специалистов ({activeDoctorEvents.length} записей)
+                    </h4>
+                  </div>
+                  {onUpdateShiftConfig && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onUpdateShiftConfig({
+                          ...shiftConfig,
+                          doctorStatusEvents: DEFAULT_DOCTOR_STATUS_EVENTS,
+                        });
+                        showToast(
+                          'Долгосрочный график больничных, отпусков и подмен на 4 месяца восстановлен.'
+                        );
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-[#F4FAF8] hover:bg-[#E6F4F1] border border-[#D1EAE4] text-xs font-bold text-[#0F2922] cursor-pointer"
+                    >
+                      Восстановить демо-график на 4 месяца
+                    </button>
+                  )}
+                </div>
+
+                {/* Add new sick leave / vacation / replacement */}
+                {onUpdateShiftConfig && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5 bg-[#F4FAF8] p-3.5 rounded-xl border border-[#D1EAE4]">
+                    <div>
+                      <label className="block font-bold text-[#0F2922] mb-1">
+                        Врач
+                      </label>
+                      <select
+                        value={newEventDoctor}
+                        onChange={(e) => setNewEventDoctor(e.target.value)}
+                        className="w-full px-2.5 py-2 rounded-lg border border-[#D1EAE4] bg-white font-bold"
+                      >
+                        {doctors.map((d) => (
+                          <option key={d.id} value={d.name}>
+                            {d.name} (Бр.№{d.brigade})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block font-bold text-[#0F2922] mb-1">
+                        Статус
+                      </label>
+                      <select
+                        value={newEventType}
+                        onChange={(e) => {
+                          const t = e.target.value as DoctorSpecialStatusType;
+                          setNewEventType(t);
+                          if (t === 'sick') setNewEventReason('Больничный лист (ОРВИ)');
+                          if (t === 'vacation') setNewEventReason('Плановый отпуск');
+                          if (t === 'training') setNewEventReason('Вет. конференция / обучение');
+                          if (t === 'replacement') setNewEventReason('Дополнительная смена по замене');
+                        }}
+                        className="w-full px-2.5 py-2 rounded-lg border border-[#D1EAE4] bg-white font-bold"
+                      >
+                        <option value="sick">Больничный лист</option>
+                        <option value="vacation">Плановый отпуск</option>
+                        <option value="training">Конференция / Обучение</option>
+                        <option value="replacement">Выход на замену</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block font-bold text-[#0F2922] mb-1">
+                        С даты
+                      </label>
+                      <input
+                        type="date"
+                        value={newEventStart}
+                        onChange={(e) => setNewEventStart(e.target.value)}
+                        className="w-full px-2.5 py-2 rounded-lg border border-[#D1EAE4] bg-white tabular-nums"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block font-bold text-[#0F2922] mb-1">
+                        По дату
+                      </label>
+                      <input
+                        type="date"
+                        min={newEventStart}
+                        value={newEventEnd}
+                        onChange={(e) => setNewEventEnd(e.target.value)}
+                        className="w-full px-2.5 py-2 rounded-lg border border-[#D1EAE4] bg-white tabular-nums"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block font-bold text-[#0F2922] mb-1">
+                        Кто заменяет
+                      </label>
+                      <select
+                        value={newEventReplacementDoc}
+                        onChange={(e) => setNewEventReplacementDoc(e.target.value)}
+                        className="w-full px-2.5 py-2 rounded-lg border border-[#D1EAE4] bg-white font-bold"
+                      >
+                        {doctors
+                          .filter((d) => d.name !== newEventDoctor)
+                          .map((d) => (
+                            <option key={d.id} value={d.name}>
+                              {d.name} (Бр.№{d.brigade})
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+
+                    <div className="flex items-end">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!newEventStart || !newEventEnd || newEventEnd < newEventStart) {
+                            return;
+                          }
+                          const created: DoctorStatusEvent = {
+                            id: `ev-${Date.now()}`,
+                            doctorName: newEventDoctor,
+                            startDate: newEventStart,
+                            endDate: newEventEnd,
+                            type: newEventType,
+                            reasonLabel: newEventReason.trim() || 'Больничный / Отпуск',
+                            replacementDoctorName:
+                              newEventType === 'replacement'
+                                ? undefined
+                                : newEventReplacementDoc,
+                          };
+                          onUpdateShiftConfig({
+                            ...shiftConfig,
+                            doctorStatusEvents: [created, ...activeDoctorEvents],
+                          });
+                          showToast(
+                            `В график внесено: ${newEventDoctor} — ${created.reasonLabel} (${newEventStart}..${newEventEnd}).`
+                          );
+                        }}
+                        className="w-full py-2 px-3 rounded-lg bg-[#0D9488] hover:bg-[#0F766E] text-white font-bold cursor-pointer"
+                      >
+                        + Внести в график
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* List of active events */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-64 overflow-y-auto pr-1">
+                  {activeDoctorEvents.map((ev) => {
+                    const cardClass =
+                      ev.type === 'sick'
+                        ? 'bg-rose-50/80 border-rose-200 text-rose-950'
+                        : ev.type === 'vacation'
+                        ? 'bg-sky-50/80 border-sky-200 text-sky-950'
+                        : ev.type === 'training'
+                        ? 'bg-purple-50/80 border-purple-200 text-purple-950'
+                        : 'bg-teal-50/80 border-teal-200 text-teal-950';
+                    const badgeLabel =
+                      ev.type === 'sick'
+                        ? 'Больничный'
+                        : ev.type === 'vacation'
+                        ? 'Отпуск'
+                        : ev.type === 'training'
+                        ? 'Обучение'
+                        : 'На замене';
+                    return (
+                      <div
+                        key={ev.id}
+                        className={`p-3 rounded-xl border flex flex-col justify-between gap-2 ${cardClass}`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between gap-2 font-extrabold">
+                            <span>{badgeLabel}</span>
+                            <span className="tabular-nums text-[11px]">
+                              {ev.startDate} — {ev.endDate}
+                            </span>
+                          </div>
+                          <div className="font-bold mt-1">{ev.doctorName}</div>
+                          <div className="text-[11px] opacity-85">{ev.reasonLabel}</div>
+                          {ev.replacementDoctorName && (
+                            <div className="text-[11px] font-bold text-[#0F766E] mt-1">
+                              Заменяет: {ev.replacementDoctorName}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex items-center justify-between gap-2 pt-2 border-t border-current/10">
+                          {ev.replacementDoctorName && onUpdateAppointmentDoctor && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                let moved = 0;
+                                appointments.forEach((appt) => {
+                                  if (
+                                    appt.status !== 'Отменена' &&
+                                    appt.doctorName === ev.doctorName
+                                  ) {
+                                    const dStr = appt.preferredDate.split(' в ')[0]?.trim() || '';
+                                    if (dStr >= ev.startDate && dStr <= ev.endDate) {
+                                      onUpdateAppointmentDoctor(
+                                        appt.id,
+                                        ev.replacementDoctorName!
+                                      );
+                                      moved += 1;
+                                    }
+                                  }
+                                });
+                                showToast(
+                                  moved > 0
+                                    ? `Передано записей заменяющему врачу (${ev.replacementDoctorName}): ${moved}`
+                                    : `На даты ${ev.startDate}..${ev.endDate} у врача нет активных записей для переноса.`
+                                );
+                              }}
+                              className="text-[10px] font-extrabold text-[#0D9488] hover:underline cursor-pointer"
+                            >
+                              Передать записи замене
+                            </button>
+                          )}
+                          {onUpdateShiftConfig && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onUpdateShiftConfig({
+                                  ...shiftConfig,
+                                  doctorStatusEvents: activeDoctorEvents.filter(
+                                    (item) => item.id !== ev.id
+                                  ),
+                                });
+                                showToast(
+                                  `Событие «${ev.reasonLabel}» (${ev.doctorName}) удалено из графика.`
+                                );
+                              }}
+                              className="text-[10px] font-bold text-rose-700 hover:underline ml-auto cursor-pointer"
+                            >
+                              Закрыть / Удалить ×
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 

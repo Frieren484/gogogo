@@ -478,7 +478,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     <div className="flex items-center gap-2">
                       <Stethoscope className="w-4 h-4 text-amber-600" />
                       <span className="text-xs font-bold text-[#122B24]">
-                        Врачи клиники ({PRESET_DOCTORS.length} специалистов · график 2/2)
+                        Врачи клиники ({PRESET_DOCTORS.length} специалистов)
                       </span>
                     </div>
                     <ChevronDown
@@ -566,7 +566,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     <div className="flex items-center gap-2">
                       <ShieldCheck className="w-4 h-4 text-blue-600" />
                       <span className="text-xs font-bold text-[#122B24]">
-                        Администратор CRM (управление клиникой и сменами)
+                        Администратор CRM (управление клиникой)
                       </span>
                     </div>
                     <ChevronDown

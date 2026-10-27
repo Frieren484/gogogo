@@ -37,7 +37,7 @@ service cloud.firestore {
         'id', 'createdAt', 'ownerName', 'phone', 'petSpecies',
         'petName', 'serviceTitle', 'doctorName', 'preferredDate',
         'estimatedPrice', 'isEmergency', 'status', 'notes',
-        'ownerUid', 'doctorRecommendation'
+        'ownerUid', 'doctorRecommendation', 'preferredTimeSlot', 'isOffShiftBooking'
       ]) &&
       data.id is string && data.id.size() >= 1 && data.id.size() <= 128 &&
       data.createdAt is string && data.createdAt.size() >= 1 && data.createdAt.size() <= 64 &&
@@ -54,7 +54,9 @@ service cloud.firestore {
       (!('isEmergency' in data) || (data.isEmergency is bool)) &&
       (!('notes' in data) || (data.notes is string && data.notes.size() <= 2000)) &&
       (!('ownerUid' in data) || (data.ownerUid is string && data.ownerUid.size() <= 128)) &&
-      (!('doctorRecommendation' in data) || (data.doctorRecommendation is string && data.doctorRecommendation.size() <= 3000));
+      (!('doctorRecommendation' in data) || (data.doctorRecommendation is string && data.doctorRecommendation.size() <= 3000)) &&
+      (!('preferredTimeSlot' in data) || (data.preferredTimeSlot is string && data.preferredTimeSlot.size() <= 32)) &&
+      (!('isOffShiftBooking' in data) || (data.isOffShiftBooking is bool));
     }
 
     function isValidPetProfile(data) {
@@ -106,7 +108,8 @@ service cloud.firestore {
       ]) &&
       data.keys().hasOnly([
         'id', 'number', 'category', 'categoryLabel', 'title',
-        'duration', 'priceFrom', 'description', 'included', 'featured'
+        'duration', 'priceFrom', 'description', 'included', 'featured',
+        'defaultDoctorName'
       ]) &&
       data.id is string && data.id.size() >= 1 && data.id.size() <= 128 &&
       data.number is string && data.number.size() <= 16 &&
@@ -119,7 +122,8 @@ service cloud.firestore {
       data.description is string && data.description.size() <= 2000 &&
       data.included is list && data.included.size() <= 20 &&
       (data.included.size() == 0 || (data.included[0] is string && data.included[0].size() <= 300)) &&
-      (!('featured' in data) || (data.featured is bool));
+      (!('featured' in data) || (data.featured is bool)) &&
+      (!('defaultDoctorName' in data) || (data.defaultDoctorName is string && data.defaultDoctorName.size() <= 120));
     }
 
     function isValidDoctor(data) {
@@ -131,7 +135,8 @@ service cloud.firestore {
       data.keys().hasOnly([
         'id', 'name', 'role', 'experienceYears', 'operationsCount',
         'education', 'quote', 'specialties', 'photoUrl',
-        'fallbackTitle', 'accentColor'
+        'fallbackTitle', 'accentColor', 'brigade', 'shiftType',
+        'shiftHours', 'personalSlots'
       ]) &&
       data.id is string && data.id.size() >= 1 && data.id.size() <= 128 &&
       data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
@@ -144,7 +149,11 @@ service cloud.firestore {
       (data.specialties.size() == 0 || (data.specialties[0] is string && data.specialties[0].size() <= 200)) &&
       data.photoUrl is string && data.photoUrl.size() <= 2048 &&
       data.fallbackTitle is string && data.fallbackTitle.size() <= 120 &&
-      data.accentColor is string && data.accentColor.size() <= 64;
+      data.accentColor is string && data.accentColor.size() <= 64 &&
+      (!('brigade' in data) || (data.brigade is number && data.brigade in [1, 2])) &&
+      (!('shiftType' in data) || (data.shiftType is string && data.shiftType in ['day', 'night'])) &&
+      (!('shiftHours' in data) || (data.shiftHours is string && data.shiftHours.size() <= 32)) &&
+      (!('personalSlots' in data) || (data.personalSlots is list && data.personalSlots.size() <= 20));
     }
 
     function isValidUserAccount(data) {
@@ -175,14 +184,13 @@ service cloud.firestore {
       allow list: if request.time != null;
       allow create: if isValidId(appointmentId) && isValidAppointment(incoming()) && incoming().id == appointmentId;
       allow update: if isValidId(appointmentId) && isValidAppointment(incoming()) &&
-        incoming().id == existing().id &&
-        incoming().createdAt == existing().createdAt && (
+        incoming().id == existing().id && (
           isAdmin() ||
           incoming().diff(existing()).affectedKeys().hasOnly([
-            'status', 'preferredDate', 'doctorRecommendation', 'notes',
+            'createdAt', 'status', 'preferredDate', 'doctorRecommendation', 'notes',
             'ownerName', 'phone', 'petSpecies', 'petName',
             'serviceTitle', 'doctorName', 'estimatedPrice', 'isEmergency',
-            'ownerUid'
+            'ownerUid', 'preferredTimeSlot', 'isOffShiftBooking'
           ])
         );
       allow delete: if isValidId(appointmentId);
@@ -227,7 +235,8 @@ service cloud.firestore {
           isAdmin() ||
           incoming().diff(existing()).affectedKeys().hasOnly([
             'number', 'category', 'categoryLabel', 'title',
-            'duration', 'priceFrom', 'description', 'included', 'featured'
+            'duration', 'priceFrom', 'description', 'included', 'featured',
+            'defaultDoctorName'
           ])
         );
       allow delete: if isValidId(serviceId);
@@ -243,7 +252,8 @@ service cloud.firestore {
           incoming().diff(existing()).affectedKeys().hasOnly([
             'name', 'role', 'experienceYears', 'operationsCount',
             'education', 'quote', 'specialties', 'photoUrl',
-            'fallbackTitle', 'accentColor'
+            'fallbackTitle', 'accentColor', 'brigade', 'shiftType',
+            'shiftHours', 'personalSlots'
           ])
         );
       allow delete: if isValidId(doctorId);

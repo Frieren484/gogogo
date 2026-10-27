@@ -25,7 +25,6 @@ import {
   DoctorItem,
   DOCTORS_DATA,
   DUTY_DOCTOR_FALLBACK_SLOTS,
-  getDoctorShiftForDate,
   resolveAppointmentPrice,
   ServiceItem,
   SERVICES_DATA,
@@ -683,25 +682,6 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
                             Закрыть
                           </button>
                         </div>
-
-                        {(() => {
-                          const doc = getDoctorForRecord(item);
-                          if (!doc) return null;
-                          const shiftInfo = getDoctorShiftForDate(doc, rescheduleDate, shiftConfig);
-                          return (
-                            <div
-                              className={`rounded-lg px-3 py-1.5 text-[11px] font-medium border ${
-                                shiftInfo.isWorkingToday
-                                  ? 'bg-[#E6F4F1]/70 border-[#CFE2DA] text-[#0F2922]'
-                                  : 'bg-amber-50 border-amber-200 text-amber-900'
-                              }`}
-                            >
-                              {shiftInfo.isWorkingToday
-                                ? `На ${rescheduleDate}: ${shiftInfo.statusText} (слоты врача: ${doc.shiftHours})`
-                                : `На ${rescheduleDate}: у врача выходной по графику 2/2 — запись возможна по предварительной брони`}
-                            </div>
-                          );
-                        })()}
 
                         {rescheduleError && (
                           <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
