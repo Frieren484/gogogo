@@ -192,6 +192,39 @@ export function App() {
   // Toast message
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // Support direct static .docx and .pptx download if opened via ?download=speech, ?download=word, ?download=frag, ?download=10, or ?download=6 link
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const dl = params.get('download');
+    if (
+      dl === 'speech' ||
+      dl === 'doklad' ||
+      dl === 'word' ||
+      dl === 'docx' ||
+      dl === 'frag' ||
+      dl === '9' ||
+      dl === '10' ||
+      dl === '6'
+    ) {
+      const fileName =
+        dl === 'speech' || dl === 'doklad'
+          ? 'Doklad_Zashchita_Lapa_Pomoshchi_Krivosheev_KD.docx'
+          : dl === 'word' || dl === 'docx'
+          ? 'Kursovoy_Proekt_Lapa_Pomoshchi_Krivosheev_KD.docx'
+          : dl === 'frag' || dl === '9'
+          ? 'Prezentaciya_Lapa_Pomoshchi_FRAG_9_slaydov.pptx'
+          : dl === '6'
+          ? 'Prezentaciya_Kursovoy_Lapa_Pomoshchi_6_slaydov.pptx'
+          : 'Prezentaciya_Kursovoy_Lapa_Pomoshchi_10_slaydov.pptx';
+      const link = document.createElement('a');
+      link.href = `/${fileName}`;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+  }, []);
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => {
