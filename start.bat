@@ -1,86 +1,93 @@
 @echo off
-setlocal EnableExtensions
-
-:: Переходим в папку с проектом
-cd /d "%~dp0"
-
-chcp 65001 >nul 2>&1
+chcp 65001 >nul
 title Ветеринарная клиника "ЛапУшки" - Запуск
+cd /d "%~dp0"
 
 echo =======================================================
 echo       Ветеринарная клиника "ЛапУшки"
 echo       Запуск веб-приложения и открытие в браузере
 echo =======================================================
-echo Папка проекта: %CD%
 echo.
 
-:: 1. Проверяем наличие Node.js
+:: 1. Проверяем, доступен ли node напрямую
 where node >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [ПОИСК] Node.js не найден в стандартном PATH. Проверяем папки установки...
-    if exist "%ProgramFiles%\nodejs\node.exe" (
-        set "PATH=%ProgramFiles%\nodejs;%PATH%"
-    ) else if exist "%ProgramFiles(x86)%\nodejs\node.exe" (
-        set "PATH=%ProgramFiles(x86)%\nodejs;%PATH%"
-    ) else if exist "%LocalAppData%\Programs\node\node.exe" (
-        set "PATH=%LocalAppData%\Programs\node;%PATH%"
-    ) else (
-        echo.
-        echo [ОШИБКА] Node.js не найден в вашей системе!
-        echo Пожалуйста, установите Node.js (рекомендуется LTS): https://nodejs.org/
-        echo После установки перезапустите этот файл.
-        echo.
-        pause
-        exit /b 1
-    )
-)
+if %errorlevel% equ 0 goto NODE_READY
 
+:: 2. Если node не в PATH, ищем в стандартных путях Windows (без вложенных блоков скобок)
+if exist "%ProgramFiles%\nodejs\node.exe" set "PATH=%ProgramFiles%\nodejs;%PATH%" & goto NODE_READY
+if exist "C:\Program Files\nodejs\node.exe" set "PATH=C:\Program Files\nodejs;%PATH%" & goto NODE_READY
+if exist "C:\Program Files (x86)\nodejs\node.exe" set "PATH=C:\Program Files (x86)\nodejs;%PATH%" & goto NODE_READY
+if exist "%LOCALAPPDATA%\Programs\node\node.exe" set "PATH=%LOCALAPPDATA%\Programs\node;%PATH%" & goto NODE_READY
+
+echo [ОШИБКА] Node.js не найден на вашем компьютере!
+echo.
+echo Для работы проекта необходим Node.js.
+echo Скачайте и установите Node.js (рекомендуется версия LTS):
+echo https://nodejs.org/
+echo.
+echo После установки закройте это окно и запустите start.bat снова.
+echo.
+pause
+exit /b 1
+
+:NODE_READY
 echo [OK] Node.js найден:
 node -v
 echo.
 
-:: 2. Проверяем наличие package.json
-if not exist "package.json" (
-    echo [ОШИБКА] Файл package.json не найден в папке %CD%!
-    echo Убедитесь, что батник запускается в папке проекта.
-    echo.
-    pause
-    exit /b 1
-)
+:: 3. Проверка package.json
+if not exist "package.json" goto ERR_NO_PACKAGE
+goto CHECK_DEPS
 
-:: 3. Проверяем наличие папки node_modules
-if not exist "node_modules" (
-    echo [ИНФО] Папка node_modules не найдена. Устанавливаем библиотеки (npm install)...
-    call npm install
-    if %errorlevel% neq 0 (
-        echo [ОШИБКА] Ошибка при установке библиотек через npm install.
-        pause
-        exit /b 1
-    )
-    echo [OK] Библиотеки успешно установлены.
-    echo.
-)
-
-:: 4. Открываем сайт в браузере
-echo [ИНФО] Открытие сайта в браузере (http://localhost:3000)...
-start http://localhost:3000
-
+:ERR_NO_PACKAGE
+echo [ОШИБКА] Файл package.json не найден в папке проекта:
+echo %CD%
+echo Пожалуйста, запускайте батник из корня проекта.
 echo.
+pause
+exit /b 1
+
+:CHECK_DEPS
+:: 4. Проверка установленных зависимостей
+if exist "node_modules" goto RUN_SERVER
+
+echo [ИНФО] Папка node_modules не найдена.
+echo Выполняется первая установка библиотек (npm install)...
+echo Это может занять около 1 минуты, пожалуйста, подождите...
+echo.
+call npm install
+if %errorlevel% neq 0 goto ERR_INSTALL
+echo.
+echo [OK] Библиотеки успешно установлены!
+echo.
+
+:RUN_SERVER
 echo =======================================================
 echo Запуск локального сервера Vite...
-echo Сайт доступен по адресу: http://localhost:3000
-echo Чтобы остановить сервер, нажмите Ctrl + C
+echo Сайт открывается по адресу: http://localhost:3000
+echo Чтобы остановить сервер, нажмите Ctrl + C в этом окне
 echo =======================================================
 echo.
 
-call npm run dev:open
+:: Открываем браузер на http://localhost:3000
+start "" "http://localhost:3000"
+
+:: Запускаем сервер Vite
+call npm run dev
 
 if %errorlevel% neq 0 (
     echo.
-    echo [ИНФО] Запуск через стандартную команду npm run dev...
-    call npm run dev
+    echo [ИНФО] Сервер завершил работу или произошла ошибка.
 )
 
 echo.
-echo [ИНФО] Сервер завершил работу.
 pause
+exit /b 0
+
+:ERR_INSTALL
+echo.
+echo [ОШИБКА] Не удалось установить библиотеки через npm install.
+echo Проверьте подключение к интернету или права доступа.
+echo.
+pause
+exit /b 1
