@@ -942,7 +942,7 @@ export async function downloadMedical10PresentationPptx(
     });
     slide7.addText(`${rc.title}\n${rc.desc}`, {
       x: rc.x + 0.08,
-      y: rc.y + 0.08,
+      y: 3.83,
       w: 1.99,
       h: 0.84,
       fontFace: 'Georgia',
