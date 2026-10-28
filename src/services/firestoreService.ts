@@ -299,7 +299,7 @@ export function sanitizeDoctorForFirestore(item: DoctorProfile): DoctorProfile {
     photoUrl: clampString(
       item.photoUrl,
       2048,
-      'https://images.unsplash.com/photo-1559839734-2b71ea197ec2?auto=format&fit=crop&w=900&q=80'
+      '/images/doctors/smirnov.jpg'
     ),
     fallbackTitle: clampString(item.fallbackTitle, 120, item.name || 'Врач'),
     accentColor: clampString(item.accentColor, 64, '#0D9488'),
@@ -336,7 +336,7 @@ export function sanitizeReviewForFirestore(
     photoUrl: clampString(
       item.photoUrl,
       2048,
-      'https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?auto=format&fit=crop&w=900&q=80'
+      '/images/pets/t1.jpg'
     ),
   };
 }

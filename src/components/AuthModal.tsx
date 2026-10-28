@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { SmartImage } from './SmartImage';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -295,9 +296,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <div className="mx-6 mb-4 rounded-xl bg-[#EEF5F1] border border-[#CFE2DA] p-3 space-y-2.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <img
+                  <SmartImage
                     src={currentUser.photoURL}
                     alt={currentUser.displayName}
+                    variant="avatar"
                     className="w-8 h-8 rounded-full border border-[#CFE2DA] object-cover shrink-0"
                   />
                   <div className="min-w-0">

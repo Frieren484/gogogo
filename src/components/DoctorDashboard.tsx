@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { SmartImage } from './SmartImage';
 import {
   Calendar,
   CheckCircle2,
@@ -297,8 +298,11 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 px-6 py-5 bg-[#F4FAF8] border-b border-[#D1EAE4]">
           <div className="flex items-center gap-3.5">
             <div className="relative shrink-0">
-              <img
+              <SmartImage
                 src={currentUser.photoURL}
+                entityId={currentUser.login}
+                variant="doctor"
+                label={currentUser.displayName}
                 alt={currentUser.displayName}
                 className="w-12 h-12 rounded-xl object-cover border-2 border-[#0D9488]"
               />

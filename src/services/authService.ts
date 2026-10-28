@@ -83,8 +83,7 @@ export const PRESET_DOCTORS: DoctorAccountConfig[] = [
     login: 'smirnov',
     displayName: 'Смирнов Алексей Викторович',
     doctorSpecialty: 'Главный врач, хирург-ортопед, эндоскопист',
-    photoURL:
-      'https://images.unsplash.com/photo-1612349317150-e413f6a5b16d?auto=format&fit=crop&w=400&q=80',
+    photoURL: '/images/doctors/smirnov.jpg',
     lastNameMatch: 'смирнов',
     brigade: 1,
     shiftLabel: 'Хирургия и ортопедия',
@@ -94,8 +93,7 @@ export const PRESET_DOCTORS: DoctorAccountConfig[] = [
     login: 'volkova',
     displayName: 'Волкова Елена Сергеевна',
     doctorSpecialty: 'Ведущий терапевт, ветеринарный кардиолог',
-    photoURL:
-      'https://images.unsplash.com/photo-1594824476967-48c8b964273f?auto=format&fit=crop&w=400&q=80',
+    photoURL: '/images/doctors/volkova.jpg',
     lastNameMatch: 'волков',
     brigade: 1,
     shiftLabel: 'Терапия и кардиология',
@@ -105,8 +103,7 @@ export const PRESET_DOCTORS: DoctorAccountConfig[] = [
     login: 'morozov',
     displayName: 'Морозов Дмитрий Игоревич',
     doctorSpecialty: 'Врач УЗ-диагностики, реаниматолог-анестезиолог',
-    photoURL:
-      'https://images.unsplash.com/photo-1537368910025-700350fe46c7?auto=format&fit=crop&w=400&q=80',
+    photoURL: '/images/doctors/morozov.jpg',
     lastNameMatch: 'морозов',
     brigade: 1,
     shiftLabel: 'УЗИ и реанимация',
@@ -116,8 +113,7 @@ export const PRESET_DOCTORS: DoctorAccountConfig[] = [
     login: 'sokolova',
     displayName: 'Соколова Анна Павловна',
     doctorSpecialty: 'Врач-ратолог, ветеринарный стоматолог',
-    photoURL:
-      'https://images.unsplash.com/photo-1559839734-2b71ea197ec2?auto=format&fit=crop&w=400&q=80',
+    photoURL: '/images/doctors/sokolova.jpg',
     lastNameMatch: 'соколов',
     brigade: 1,
     shiftLabel: 'Ратология и стоматология',
@@ -127,8 +123,7 @@ export const PRESET_DOCTORS: DoctorAccountConfig[] = [
     login: 'vasiliev',
     displayName: 'Васильев Михаил Юрьевич',
     doctorSpecialty: 'Ведущий хирург-травматолог, нейрохирург',
-    photoURL:
-      'https://images.unsplash.com/photo-1622253692010-333f2da6031d?auto=format&fit=crop&w=400&q=80',
+    photoURL: '/images/doctors/vasiliev.jpg',
     lastNameMatch: 'васильев',
     brigade: 2,
     shiftLabel: 'Травматология и нейрохирургия',
@@ -138,8 +133,7 @@ export const PRESET_DOCTORS: DoctorAccountConfig[] = [
     login: 'pavlova',
     displayName: 'Павлова Ирина Николаевна',
     doctorSpecialty: 'Врач-терапевт, эндокринолог, иммунолог',
-    photoURL:
-      'https://images.unsplash.com/photo-1527613426441-4da17471b66d?auto=format&fit=crop&w=400&q=80',
+    photoURL: '/images/doctors/pavlova.jpg',
     lastNameMatch: 'павлов',
     brigade: 2,
     shiftLabel: 'Терапия и эндокринология',
@@ -149,8 +143,7 @@ export const PRESET_DOCTORS: DoctorAccountConfig[] = [
     login: 'kuznetsov',
     displayName: 'Кузнецов Артём Романович',
     doctorSpecialty: 'Заведующий ОРИТ, анестезиолог-реаниматолог',
-    photoURL:
-      'https://images.unsplash.com/photo-1582750433449-648ed127bb54?auto=format&fit=crop&w=400&q=80',
+    photoURL: '/images/doctors/kuznetsov.jpg',
     lastNameMatch: 'кузнецов',
     brigade: 2,
     shiftLabel: 'Стационар и реанимация ОРИТ',
@@ -160,8 +153,7 @@ export const PRESET_DOCTORS: DoctorAccountConfig[] = [
     login: 'novikova',
     displayName: 'Новикова Ольга Дмитриевна',
     doctorSpecialty: 'Врач-дерматолог, аллерголог',
-    photoURL:
-      'https://images.unsplash.com/photo-1651008376811-b90baee60c1f?auto=format&fit=crop&w=400&q=80',
+    photoURL: '/images/doctors/novikova.jpg',
     lastNameMatch: 'новиков',
     brigade: 2,
     shiftLabel: 'Дерматология и аллергология',

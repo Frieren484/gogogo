@@ -60,6 +60,7 @@ import { SavedAppointmentsModal } from './components/SavedAppointmentsModal';
 import { AdminDashboard } from './components/AdminDashboard';
 import { DoctorDashboard } from './components/DoctorDashboard';
 import { AuthModal } from './components/AuthModal';
+import { SmartImage } from './components/SmartImage';
 import {
   AppUserProfile,
   filterAppointmentsForUser,
@@ -81,9 +82,9 @@ import {
 } from './services/firestoreService';
 
 const STORAGE_KEY = 'lapa_pomoshchi_appointments_v7';
-const REVIEWS_STORAGE_KEY = 'lapa_pomoshchi_reviews_v3';
+const REVIEWS_STORAGE_KEY = 'lapa_pomoshchi_reviews_v4';
 const SERVICES_STORAGE_KEY = 'lapa_pomoshchi_services_v3';
-const DOCTORS_STORAGE_KEY = 'lapa_pomoshchi_doctors_v3';
+const DOCTORS_STORAGE_KEY = 'lapa_pomoshchi_doctors_v4';
 const SHIFT_CONFIG_STORAGE_KEY = 'lapa_pomoshchi_shift_config_v1';
 
 function mergeServicesWithDefaults(list: ServiceItem[]): ServiceItem[] {
@@ -105,9 +106,15 @@ function mergeDoctorsWithDefaults(list: DoctorProfile[]): DoctorProfile[] {
   const defaultMap = new Map(DOCTORS_DATA.map((d) => [d.id, d]));
   const merged = list.map((item) => {
     const def = defaultMap.get(item.id);
+    const shouldUseDefaultPhoto =
+      def?.photoUrl &&
+      (!item.photoUrl ||
+        item.photoUrl.endsWith('.svg') ||
+        item.photoUrl.includes('images.unsplash.com'));
     return {
       ...def,
       ...item,
+      photoUrl: shouldUseDefaultPhoto ? def.photoUrl : item.photoUrl || def?.photoUrl || '/images/doctors/smirnov.jpg',
       brigade: item.brigade || def?.brigade || 1,
       shiftType: item.shiftType || def?.shiftType || 'day',
       shiftHours: item.shiftHours || def?.shiftHours || '10:00–20:00',
@@ -123,6 +130,26 @@ function mergeDoctorsWithDefaults(list: DoctorProfile[]): DoctorProfile[] {
   });
   const existingIds = new Set(merged.map((d) => d.id));
   const missing = DOCTORS_DATA.filter((d) => !existingIds.has(d.id));
+  return [...merged, ...missing];
+}
+
+function mergeReviewsWithDefaults(list: TestimonialItem[]): TestimonialItem[] {
+  const defaultMap = new Map(TESTIMONIALS_DATA.map((r) => [r.id, r]));
+  const merged = list.map((item) => {
+    const def = defaultMap.get(item.id);
+    const shouldUseDefaultPhoto =
+      def?.photoUrl &&
+      (!item.photoUrl ||
+        item.photoUrl.endsWith('.svg') ||
+        item.photoUrl.includes('images.unsplash.com'));
+    return {
+      ...def,
+      ...item,
+      photoUrl: shouldUseDefaultPhoto ? def.photoUrl : item.photoUrl || def?.photoUrl || '/images/pets/t1.jpg',
+    };
+  });
+  const existingIds = new Set(merged.map((r) => r.id));
+  const missing = TESTIMONIALS_DATA.filter((r) => !existingIds.has(r.id));
   return [...merged, ...missing];
 }
 
@@ -366,11 +393,7 @@ export function App() {
       if (raw) {
         const parsed = JSON.parse(raw) as TestimonialItem[];
         if (Array.isArray(parsed) && parsed.length > 0) {
-          const existingIds = new Set(parsed.map((r) => r.id));
-          const missingDefaults = TESTIMONIALS_DATA.filter(
-            (def) => !existingIds.has(def.id)
-          );
-          return [...parsed, ...missingDefaults];
+          return mergeReviewsWithDefaults(parsed);
         }
       }
     } catch {
@@ -447,7 +470,7 @@ export function App() {
         setDoctorsList(mergeDoctorsWithDefaults(cloudDoctors));
       },
       onReviewsUpdate: (cloudReviews) => {
-        setReviews(cloudReviews);
+        setReviews(mergeReviewsWithDefaults(cloudReviews));
       },
       onUsersUpdate: (cloudUsers) => {
         syncRegisteredAccountsFromCloud(cloudUsers);
@@ -988,13 +1011,13 @@ export function App() {
       breedLower.includes('корги') ||
       breedLower.includes('терьер') ||
       breedLower.includes('шпиц')
-        ? 'https://images.unsplash.com/photo-1548199973-03cce0bbc87b?auto=format&fit=crop&w=600&q=80'
+        ? '/images/pets/t1.jpg'
         : breedLower.includes('грызун') ||
           breedLower.includes('кролик') ||
           breedLower.includes('шиншилл') ||
           breedLower.includes('свинк')
-        ? 'https://images.unsplash.com/photo-1585110396000-c9ffd4e4b308?auto=format&fit=crop&w=600&q=80'
-        : 'https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?auto=format&fit=crop&w=600&q=80';
+        ? '/images/pets/t3.jpg'
+        : '/images/pets/t2.jpg';
 
     const createdReview: TestimonialItem = {
       id: `rev-${Date.now()}`,
@@ -1275,9 +1298,10 @@ export function App() {
             >
               {currentUser.authSource !== 'guest' ? (
                 <>
-                  <img
+                  <SmartImage
                     src={currentUser.photoURL}
                     alt={currentUser.displayName}
+                    variant="avatar"
                     className="w-5 h-5 rounded-full object-cover shrink-0"
                   />
                   <span className="max-w-[96px] truncate">
@@ -1709,9 +1733,11 @@ export function App() {
               {/* Right Column */}
               <div className="lg:col-span-5">
                 <div className="relative rounded-2xl overflow-hidden border-2 border-[#CFE2DA] bg-[#DFECE6] shadow-xl">
-                  <img
+                  <SmartImage
                     src={CLINIC_INFO.heroPhotoUrl}
                     alt="Главный ветеринарный врач клиники Лапа Помощи осматривает питомца в светлом кабинете"
+                    variant="hero"
+                    priority={true}
                     className="w-full h-[420px] sm:h-[500px] object-cover object-center"
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-[#0F2922]/85 via-[#0F2922]/20 to-transparent" />
@@ -2410,8 +2436,11 @@ export function App() {
                       >
                         <div>
                           <div className="relative h-60 bg-[#DFECE6] overflow-hidden">
-                            <img
+                            <SmartImage
                               src={doc.photoUrl}
+                              entityId={doc.id}
+                              variant="doctor"
+                              label={doc.name}
                               alt={`${doc.name} — ${doc.role}`}
                               className="w-full h-full object-cover object-top"
                             />
@@ -2719,8 +2748,11 @@ export function App() {
                     <div>
                       <div className="flex items-center justify-between gap-3 mb-4">
                         <div className="flex items-center gap-3.5 min-w-0">
-                          <img
+                          <SmartImage
                             src={rev.photoUrl}
+                            entityId={rev.id}
+                            variant="pet"
+                            label={rev.petName}
                             alt={rev.petName}
                             className="w-12 h-12 rounded-xl object-cover border border-[#CFE2DA] shrink-0"
                           />

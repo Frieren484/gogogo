@@ -978,7 +978,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       education: 'МГАВМиБ им. К. И. Скрябина',
       quote: 'Забота о каждом пациенте на принципах доказательной медицины.',
       specialties: ['Терапия', 'Диагностика'],
-      photoUrl: '/images/vet-doctor-1.jpg',
+      photoUrl: '/images/doctors/smirnov.jpg',
       fallbackTitle: 'Специалист клиники',
       accentColor: '#0D9488',
       brigade: 1,
