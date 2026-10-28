@@ -59,11 +59,17 @@ import {
 import { downloadAppointmentVoucher } from '../utils/appointmentVoucher';
 import { GoogleDriveSection } from './GoogleDriveSection';
 import {
+  deleteAccountWithRoleCheck,
   filterAppointmentsForUser,
+  getActivePresetClients,
+  getActivePresetDoctors,
   getClientPetProfile,
+  getDeletedAccountLogins,
+  getRegisteredAccounts,
   PRESET_CLIENTS,
   PRESET_DOCTORS,
   registerNewClientAccount,
+  restoreAllDeletedAccounts,
   saveUserProfile,
   SYSTEM_ADMIN_PROFILE,
 } from '../services/authService';
@@ -99,6 +105,7 @@ interface AdminDashboardProps {
 
 type AdminTab =
   | 'appointments'
+  | 'accounts'
   | 'analytics'
   | 'services'
   | 'doctors'
@@ -206,6 +213,33 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [testResults, setTestResults] = useState<SystemTestResult[]>([]);
   const [isRunningTests, setIsRunningTests] = useState(false);
   const [lastTestRunAt, setLastTestRunAt] = useState<string | null>(null);
+
+  // Account management state in Admin
+  const [accountRefreshKey, setAccountRefreshKey] = useState(0);
+  const [pendingAdminDeleteAccount, setPendingAdminDeleteAccount] = useState<{
+    uid?: string;
+    login: string;
+    role: 'user' | 'doctor';
+    displayName: string;
+    subtitle: string;
+  } | null>(null);
+
+  const adminRegisteredClients = useMemo(
+    () => getRegisteredAccounts(),
+    [accountRefreshKey, isOpen]
+  );
+  const adminPresetClients = useMemo(
+    () => getActivePresetClients(),
+    [accountRefreshKey, isOpen]
+  );
+  const adminPresetDoctors = useMemo(
+    () => getActivePresetDoctors(),
+    [accountRefreshKey, isOpen]
+  );
+  const adminDeletedCount = useMemo(
+    () => getDeletedAccountLogins().length,
+    [accountRefreshKey, isOpen]
+  );
 
   const showToast = (msg: string) => {
     setAdminToast(msg);
@@ -1128,6 +1162,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           >
             <Calendar className="w-4 h-4" />
             <span>Журнал записей ({appointments.length})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('accounts')}
+            className={`py-3 px-4 text-xs sm:text-sm font-bold border-b-2 transition-snappy inline-flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+              activeTab === 'accounts'
+                ? 'border-[#0D9488] text-[#0D9488]'
+                : 'border-transparent text-[#335249] hover:text-[#0F2922]'
+            }`}
+          >
+            <UserCheck className="w-4 h-4" />
+            <span>
+              Аккаунты ({adminRegisteredClients.length + adminPresetClients.length + adminPresetDoctors.length})
+            </span>
           </button>
 
           <button
@@ -3311,6 +3360,251 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     </div>
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* TAB: ACCOUNTS MANAGEMENT & RBAC DELETION */}
+          {activeTab === 'accounts' && (
+            <div className="space-y-5">
+              {/* RBAC Policy Banner */}
+              <div className="bg-white rounded-2xl border border-[#D1EAE4] p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className="w-5 h-5 text-[#0D9488]" />
+                    <h3 className="text-base font-extrabold text-[#0F2922]">
+                      Управление учетными записями пользователей и врачей (RBAC)
+                    </h3>
+                  </div>
+                  <p className="text-xs text-[#335249] leading-relaxed">
+                    <strong>Регламент прав удаления аккаунтов:</strong> 1) Пользователи (клиенты) могут самостоятельно удалять свой собственный аккаунт с подтверждением. 2) Врачам запрещено удалять свою учетную запись. 3) <strong>Администратор может удалить любой аккаунт</strong> клиента или врача с обязательным предупреждением.
+                  </p>
+                </div>
+                {adminDeletedCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      restoreAllDeletedAccounts();
+                      setAccountRefreshKey((k) => k + 1);
+                      showToast(
+                        'Все ранее удаленные демонстрационные аккаунты клиентов и врачей восстановлены.'
+                      );
+                    }}
+                    className="py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold inline-flex items-center gap-1.5 shrink-0 cursor-pointer"
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                    <span>Восстановить удаленные демо-аккаунты ({adminDeletedCount})</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Admin Confirmation Warning Dialog before deleting any account */}
+              {pendingAdminDeleteAccount && (
+                <div className="rounded-2xl bg-red-50 border-2 border-red-400 p-5 space-y-3 shadow-md">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="w-6 h-6 text-red-600 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <h4 className="text-sm font-extrabold text-red-950">
+                        Предупреждение администратора: подтвердите удаление учетной записи
+                      </h4>
+                      <p className="text-xs text-red-900 leading-relaxed">
+                        Вы собираетесь удалить аккаунт{' '}
+                        <strong>«{pendingAdminDeleteAccount.displayName}»</strong> (логин:{' '}
+                        <span className="font-mono font-bold">
+                          {pendingAdminDeleteAccount.login}
+                        </span>
+                        , роль:{' '}
+                        <strong>
+                          {pendingAdminDeleteAccount.role === 'doctor'
+                            ? 'Врач клиники'
+                            : 'Клиент (владелец питомца)'}
+                        </strong>
+                        ). После подтверждения вход под этим логином будет заблокирован.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-end gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => setPendingAdminDeleteAccount(null)}
+                      className="px-4 py-2 rounded-xl bg-white border border-red-200 hover:bg-slate-50 text-xs font-bold text-slate-700 cursor-pointer"
+                    >
+                      Отмена
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const res = deleteAccountWithRoleCheck(
+                          SYSTEM_ADMIN_PROFILE,
+                          {
+                            uid: pendingAdminDeleteAccount.uid,
+                            login: pendingAdminDeleteAccount.login,
+                            role: pendingAdminDeleteAccount.role,
+                            displayName: pendingAdminDeleteAccount.displayName,
+                          }
+                        );
+                        setPendingAdminDeleteAccount(null);
+                        setAccountRefreshKey((k) => k + 1);
+                        if (res.ok) {
+                          showToast(res.message);
+                        } else {
+                          showToast(res.error);
+                        }
+                      }}
+                      className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer shadow-xs"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      <span>Подтвердить удаление аккаунта</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                {/* Column 1: Client Accounts */}
+                <div className="bg-white rounded-2xl border border-[#D1EAE4] p-5 space-y-3.5">
+                  <div className="flex items-center justify-between border-b border-[#D1EAE4] pb-3">
+                    <div>
+                      <h4 className="text-sm font-extrabold text-[#0F2922]">
+                        Учетные записи клиентов ({adminRegisteredClients.length + adminPresetClients.length})
+                      </h4>
+                      <p className="text-[11px] text-[#335249]">
+                        Могут удалять свой аккаунт сами, либо быть удалены Администратором
+                      </p>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-lg bg-[#E6F4F1] text-[#0D9488] text-xs font-bold">
+                      Роль: Клиент
+                    </span>
+                  </div>
+
+                  <div className="space-y-2.5">
+                    {adminRegisteredClients.map((acc) => (
+                      <div
+                        key={acc.uid}
+                        className="rounded-xl bg-emerald-50/50 border border-emerald-200 p-3.5 flex items-center justify-between gap-3"
+                      >
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="px-2 py-0.5 rounded bg-emerald-600 text-white text-[10px] font-bold">
+                              Новорег
+                            </span>
+                            <span className="text-xs font-extrabold text-[#0F2922]">
+                              {acc.displayName}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-[#335249] mt-1 font-mono">
+                            Логин: <strong>{acc.login}</strong> · Пароль:{' '}
+                            <strong>{acc.password}</strong> · Питомец:{' '}
+                            {acc.petSpecies || 'Кошка'} «{acc.petName || 'Не указан'}»
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPendingAdminDeleteAccount({
+                              uid: acc.uid,
+                              login: acc.login,
+                              role: 'user',
+                              displayName: acc.displayName,
+                              subtitle: `Питомец: ${acc.petName || '—'}`,
+                            })
+                          }
+                          className="py-1.5 px-3 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs font-bold inline-flex items-center gap-1.5 shrink-0 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Удалить</span>
+                        </button>
+                      </div>
+                    ))}
+
+                    {adminPresetClients.map((cl) => (
+                      <div
+                        key={cl.login}
+                        className="rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] p-3.5 flex items-center justify-between gap-3"
+                      >
+                        <div>
+                          <div className="text-xs font-extrabold text-[#0F2922]">
+                            {cl.displayName}
+                          </div>
+                          <div className="text-[11px] text-[#335249] mt-1 font-mono">
+                            Логин: <strong>{cl.login}</strong> · Пароль: <strong>123</strong> ·{' '}
+                            {cl.petSpecies} «{cl.petName}»
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPendingAdminDeleteAccount({
+                              uid: `client-${cl.login}`,
+                              login: cl.login,
+                              role: 'user',
+                              displayName: cl.displayName,
+                              subtitle: `${cl.petSpecies} «${cl.petName}»`,
+                            })
+                          }
+                          className="py-1.5 px-3 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs font-bold inline-flex items-center gap-1.5 shrink-0 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Удалить</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Column 2: Doctor Accounts */}
+                <div className="bg-white rounded-2xl border border-[#D1EAE4] p-5 space-y-3.5">
+                  <div className="flex items-center justify-between border-b border-[#D1EAE4] pb-3">
+                    <div>
+                      <h4 className="text-sm font-extrabold text-[#0F2922]">
+                        Служебные аккаунты врачей ({adminPresetDoctors.length})
+                      </h4>
+                      <p className="text-[11px] text-[#335249]">
+                        Сами врачи удалять свой аккаунт не могут — доступно только Администратору
+                      </p>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-lg bg-amber-100 text-amber-900 text-xs font-bold">
+                      Роль: Врач
+                    </span>
+                  </div>
+
+                  <div className="space-y-2.5 max-h-[420px] overflow-y-auto pr-1">
+                    {adminPresetDoctors.map((doc) => (
+                      <div
+                        key={doc.doctorId}
+                        className="rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] p-3.5 flex items-center justify-between gap-3"
+                      >
+                        <div>
+                          <div className="text-xs font-extrabold text-[#0F2922]">
+                            {doc.displayName}
+                          </div>
+                          <div className="text-[11px] text-[#335249] mt-0.5">
+                            {doc.doctorSpecialty} (Бригада №{doc.brigade})
+                          </div>
+                          <div className="text-[11px] text-amber-900 mt-1 font-mono">
+                            Логин: <strong>{doc.login}</strong> · Пароль: <strong>123</strong>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPendingAdminDeleteAccount({
+                              uid: `doctor-${doc.doctorId}`,
+                              login: doc.login,
+                              role: 'doctor',
+                              displayName: doc.displayName,
+                              subtitle: doc.doctorSpecialty,
+                            })
+                          }
+                          className="py-1.5 px-3 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs font-bold inline-flex items-center gap-1.5 shrink-0 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Удалить</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
           )}

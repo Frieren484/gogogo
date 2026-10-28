@@ -321,11 +321,20 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-xs font-medium">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() =>
+                showNotification(
+                  'Предупреждение безопасности: Врачи не могут самостоятельно удалять свой служебный аккаунт. Удалить учетную запись врача может только Администратор CRM.'
+                )
+              }
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 text-xs font-bold transition-snappy cursor-pointer"
+              title="Нажмите для просмотра правил безопасности аккаунта врача"
+            >
               <Lock className="w-3.5 h-3.5 text-amber-700 shrink-0" />
-              <span>Режим врача: без удаления и без изменения цен</span>
-            </div>
+              <span>Удаление своего аккаунта запрещено</span>
+            </button>
             <button
               type="button"
               onClick={onClose}
@@ -337,10 +346,22 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({
           </div>
         </div>
 
-        {/* Success Toast */}
+        {/* Success / Warning Toast */}
         {savedSuccessMessage && (
-          <div className="px-6 py-2.5 bg-emerald-50 border-b border-emerald-200 flex items-center gap-2 text-xs font-semibold text-emerald-800">
-            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          <div
+            className={`px-6 py-2.5 border-b flex items-center gap-2 text-xs font-semibold ${
+              savedSuccessMessage.startsWith('Предупреждение')
+                ? 'bg-amber-50 border-amber-300 text-amber-950'
+                : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+            }`}
+          >
+            <CheckCircle2
+              className={`w-4 h-4 shrink-0 ${
+                savedSuccessMessage.startsWith('Предупреждение')
+                  ? 'text-amber-700'
+                  : 'text-emerald-600'
+              }`}
+            />
             <span>{savedSuccessMessage}</span>
           </div>
         )}

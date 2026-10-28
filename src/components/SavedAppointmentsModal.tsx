@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  AlertTriangle,
   Calendar,
   CalendarCheck2,
   CheckCircle2,
@@ -33,9 +34,11 @@ import {
 import {
   AppUserProfile,
   ClientPetProfile,
+  deleteAccountWithRoleCheck,
+  deleteClientPetProfile,
   filterAppointmentsForUser,
-  getClientPetProfile,
-  saveClientPetProfile,
+  getClientPetProfiles,
+  upsertClientPetProfile,
 } from '../services/authService';
 import {
   downloadAppointmentVoucher,
@@ -84,6 +87,7 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
 
   const [activeTab, setActiveTab] = useState<'appointments' | 'pet_profile'>('appointments');
   const [expandedPrepId, setExpandedPrepId] = useState<string | null>(null);
+  const [showDeleteAccountWarning, setShowDeleteAccountWarning] = useState(false);
 
   // Состояние переноса визита (Reschedule)
   const [reschedulingId, setReschedulingId] = useState<string | null>(null);
@@ -91,7 +95,12 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
   const [rescheduleTime, setRescheduleTime] = useState<string>('11:00');
   const [rescheduleError, setRescheduleError] = useState<string>('');
 
-  // Карточка питомца клиента
+  // Список питомцев клиента (поддержка нескольких питомцев)
+  const [petsList, setPetsList] = useState<ClientPetProfile[]>([]);
+  const [selectedPetId, setSelectedPetId] = useState<string>('new');
+  const [confirmDeletePetId, setConfirmDeletePetId] = useState<string | null>(null);
+
+  // Поля формы активного/нового питомца
   const [petName, setPetName] = useState<string>('');
   const [petSpecies, setPetSpecies] = useState<'Кошка' | 'Собака' | 'Грызун'>('Кошка');
   const [breedAndAge, setBreedAndAge] = useState<string>('');
@@ -108,22 +117,47 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
     [appointments, currentUser]
   );
 
+  const applyPetToForm = (pet: ClientPetProfile) => {
+    setSelectedPetId(pet.id || 'pet-1');
+    setPetName(pet.petName);
+    setPetSpecies(pet.petSpecies);
+    setBreedAndAge(pet.breedAndAge);
+    setWeightKg(pet.weightKg);
+    setChronicNotes(pet.chronicNotes);
+    setLastVaccinationDate(pet.lastVaccinationDate);
+    setProfileUpdatedAt(pet.updatedAt);
+    setConfirmDeletePetId(null);
+  };
+
+  const handleStartAddNewPet = () => {
+    setSelectedPetId('new');
+    setPetName('');
+    setPetSpecies('Кошка');
+    setBreedAndAge('');
+    setWeightKg('');
+    setChronicNotes('');
+    setLastVaccinationDate('');
+    setProfileUpdatedAt('');
+    setSavedBanner('');
+    setConfirmDeletePetId(null);
+  };
+
   useEffect(() => {
     if (isOpen) {
       setSavedBanner('');
       setReschedulingId(null);
       setRescheduleError('');
-      const storedProfile = getClientPetProfile(currentUser);
-      if (storedProfile) {
-        setPetName(storedProfile.petName);
-        setPetSpecies(storedProfile.petSpecies);
-        setBreedAndAge(storedProfile.breedAndAge);
-        setWeightKg(storedProfile.weightKg);
-        setChronicNotes(storedProfile.chronicNotes);
-        setLastVaccinationDate(storedProfile.lastVaccinationDate);
-        setProfileUpdatedAt(storedProfile.updatedAt);
+      setShowDeleteAccountWarning(false);
+      setConfirmDeletePetId(null);
+
+      const storedPets = getClientPetProfiles(currentUser);
+      setPetsList(storedPets);
+
+      if (storedPets.length > 0) {
+        applyPetToForm(storedPets[0]);
       } else {
         const latestAppt = visibleAppointments[0];
+        setSelectedPetId('new');
         setPetName(latestAppt?.petName || '');
         setPetSpecies(
           (latestAppt?.petSpecies as 'Кошка' | 'Собака' | 'Грызун') || 'Кошка'
@@ -142,6 +176,27 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
   const isAdmin = currentUser.role === 'admin' && currentUser.login === '1';
   const isGuest = currentUser.authSource === 'guest';
 
+  const handleConfirmSelfDelete = () => {
+    const res = deleteAccountWithRoleCheck(currentUser, {
+      uid: currentUser.uid,
+      login: currentUser.login || currentUser.uid,
+      role: 'user',
+      displayName: currentUser.displayName,
+    });
+    if (res.ok) {
+      setShowDeleteAccountWarning(false);
+      if (onUserUpdated) {
+        onUserUpdated(res.nextActiveUser);
+      }
+      if (onShowToast) {
+        onShowToast(res.message);
+      }
+      onClose();
+    } else if (onShowToast) {
+      onShowToast(res.error);
+    }
+  };
+
   const handleSavePetCard = (e: React.FormEvent) => {
     e.preventDefault();
     if (isGuest) {
@@ -155,7 +210,10 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
       setSavedBanner('Пожалуйста, укажите кличку вашего питомца.');
       return;
     }
-    const updated: ClientPetProfile = saveClientPetProfile(currentUser, {
+
+    const isCreatingNew = selectedPetId === 'new';
+    const { pets: updatedList, savedPet } = upsertClientPetProfile(currentUser, {
+      id: isCreatingNew ? undefined : selectedPetId,
       petName,
       petSpecies,
       breedAndAge,
@@ -164,15 +222,48 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
       lastVaccinationDate,
       updatedAt: new Date().toLocaleDateString('ru-RU'),
     });
-    setProfileUpdatedAt(updated.updatedAt);
+
+    setPetsList(updatedList);
+    applyPetToForm(savedPet);
+
+    if (onUserUpdated && currentUser.role === 'user' && updatedList[0]) {
+      onUserUpdated({
+        ...currentUser,
+        petName: updatedList[0].petName,
+        petSpecies: updatedList[0].petSpecies,
+      });
+    }
+
+    const msg = isCreatingNew
+      ? `Питомец «${savedPet.petName}» (${savedPet.petSpecies}) добавлен в ваш кабинет! Всего питомцев: ${updatedList.length}.`
+      : `Электронная медкарта питомца «${savedPet.petName}» обновлена!`;
+    setSavedBanner(msg);
+    if (onShowToast) {
+      onShowToast(msg);
+    }
+  };
+
+  const handleConfirmDeletePet = (pet: ClientPetProfile) => {
+    if (!pet.id) return;
+    const remaining = deleteClientPetProfile(currentUser, pet.id);
+    setPetsList(remaining);
+    setConfirmDeletePetId(null);
+
+    if (remaining.length > 0) {
+      applyPetToForm(remaining[0]);
+    } else {
+      handleStartAddNewPet();
+    }
+
     if (onUserUpdated && currentUser.role === 'user') {
       onUserUpdated({
         ...currentUser,
-        petName: updated.petName,
-        petSpecies: updated.petSpecies,
+        petName: remaining[0]?.petName || '',
+        petSpecies: remaining[0]?.petSpecies || 'Кошка',
       });
     }
-    const msg = `Электронная медкарта питомца «${updated.petName}» сохранена! Данные будут автоматически подставляться при новой записи.`;
+
+    const msg = `Карточка питомца «${pet.petName}» удалена из вашего списка.`;
     setSavedBanner(msg);
     if (onShowToast) {
       onShowToast(msg);
@@ -288,49 +379,102 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
         </div>
 
         {/* Вкладки Личного кабинета */}
-        <div className="px-6 pt-4 bg-[#F4FAF8]/50 border-b border-[#D1EAE4] flex flex-wrap items-center gap-2 pb-3">
-          <button
-            type="button"
-            onClick={() => setActiveTab('appointments')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-snappy inline-flex items-center gap-2 cursor-pointer ${
-              activeTab === 'appointments'
-                ? 'bg-[#0D9488] text-white shadow-xs'
-                : 'bg-white border border-[#D1EAE4] text-[#335249] hover:text-[#0F2922]'
-            }`}
-          >
-            <FileText className="w-3.5 h-3.5" />
-            <span>
-              {isAdmin
-                ? `Реестр записей (${visibleAppointments.length})`
-                : `Мои заявки и талоны (${visibleAppointments.length})`}
-            </span>
-          </button>
+        <div className="px-6 pt-4 bg-[#F4FAF8]/50 border-b border-[#D1EAE4] flex flex-wrap items-center justify-between gap-2 pb-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setActiveTab('appointments')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-snappy inline-flex items-center gap-2 cursor-pointer ${
+                activeTab === 'appointments'
+                  ? 'bg-[#0D9488] text-white shadow-xs'
+                  : 'bg-white border border-[#D1EAE4] text-[#335249] hover:text-[#0F2922]'
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>
+                {isAdmin
+                  ? `Реестр записей (${visibleAppointments.length})`
+                  : `Мои заявки и талоны (${visibleAppointments.length})`}
+              </span>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setActiveTab('pet_profile')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-snappy inline-flex items-center gap-2 cursor-pointer ${
-              activeTab === 'pet_profile'
-                ? 'bg-[#0D9488] text-white shadow-xs'
-                : 'bg-white border border-[#D1EAE4] text-[#335249] hover:text-[#0F2922]'
-            }`}
-          >
-            <PawPrint className="w-3.5 h-3.5" />
-            <span>
-              Карточка моего питомца {petName ? `«${petName}»` : ''}
-            </span>
-          </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('pet_profile')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-snappy inline-flex items-center gap-2 cursor-pointer ${
+                activeTab === 'pet_profile'
+                  ? 'bg-[#0D9488] text-white shadow-xs'
+                  : 'bg-white border border-[#D1EAE4] text-[#335249] hover:text-[#0F2922]'
+              }`}
+            >
+              <PawPrint className="w-3.5 h-3.5" />
+              <span>
+                Мои питомцы ({petsList.length})
+              </span>
+            </button>
+          </div>
+
+          {!isGuest && currentUser.role === 'user' && (
+            <button
+              type="button"
+              onClick={() => setShowDeleteAccountWarning((prev) => !prev)}
+              className="px-3 py-2 rounded-xl text-xs font-bold bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 inline-flex items-center gap-1.5 transition-snappy cursor-pointer"
+              title="Удалить свой аккаунт с предупреждением"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Удалить мой аккаунт</span>
+            </button>
+          )}
         </div>
 
         <div className="p-6">
+          {/* Предупреждение перед удалением собственного аккаунта клиента */}
+          {showDeleteAccountWarning && !isGuest && currentUser.role === 'user' && (
+            <div className="mb-4 rounded-xl bg-red-50 border-2 border-red-300 p-4 space-y-3">
+              <div className="flex items-start gap-2.5">
+                <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <div className="text-xs font-extrabold text-red-900">
+                    Предупреждение: безвозвратное удаление вашего аккаунта
+                  </div>
+                  <p className="text-xs text-red-800 leading-relaxed">
+                    Вы собираетесь удалить свой собственный аккаунт{' '}
+                    <strong>«{currentUser.displayName}»</strong> (логин:{' '}
+                    <span className="font-mono font-bold">
+                      {currentUser.login || currentUser.uid}
+                    </span>
+                    ). При подтверждении ваш профиль и электронные медкарты ваших питомцев будут удалены, а вы выйдете в гостевой режим.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteAccountWarning(false)}
+                  className="px-3.5 py-1.5 rounded-lg bg-white border border-red-200 hover:bg-slate-50 text-xs font-bold text-slate-700 cursor-pointer"
+                >
+                  Отмена
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmSelfDelete}
+                  className="px-4 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer shadow-xs"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Да, удалить мой аккаунт</span>
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Privacy & Isolation Badge for Regular Clients */}
           {!isAdmin && (
             <div className="mb-4 rounded-xl bg-[#E6F4F1]/70 border border-[#D1EAE4] px-3.5 py-2.5 flex items-center gap-2 text-xs text-[#0F2922]">
               <ShieldCheck className="w-4 h-4 text-[#0D9488] shrink-0" />
               <span>
                 {isGuest
-                  ? 'Вы находитесь в гостевом режиме. Войдите или зарегистрируйтесь, чтобы сохранять электронную медкарту питомца и историю приемов.'
-                  : 'Защита данных: отображаются только ваши личные заявки, талоны и медкарта питомца, привязанные к вашему профилю.'}
+                  ? 'Вы находитесь в гостевом режиме. Войдите или зарегистрируйтесь, чтобы сохранять электронные медкарты нескольких питомцев и историю приемов.'
+                  : 'Защита данных: вы можете вести электронные медкарты сразу для нескольких своих питомцев и переключаться между ними при записи.'}
               </span>
             </div>
           )}
@@ -342,7 +486,7 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
                 Войдите в кабинет владельца питомца
               </h4>
               <p className="text-xs text-[#335249] max-w-md mx-auto mb-5 leading-relaxed">
-                После входа или быстрой регистрации за 15 секунд здесь будут доступны ваши талоны на прием, заключения врачей и электронный паспорт питомца с автозаполнением.
+                После входа или быстрой регистрации за 15 секунд здесь будут доступны ваши талоны на прием, заключения врачей и электронные медкарты ваших питомцев с автозаполнением.
               </p>
               <div className="flex flex-wrap items-center justify-center gap-3">
                 {onOpenAuthModal && (
@@ -373,6 +517,128 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
             </div>
           ) : activeTab === 'pet_profile' ? (
             <form onSubmit={handleSavePetCard} className="space-y-4">
+              {/* Панель выбора и добавления нескольких питомцев */}
+              <div className="rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h4 className="text-xs font-extrabold uppercase tracking-wider text-[#0F2922]">
+                      Ваши питомцы ({petsList.length})
+                    </h4>
+                    <p className="text-[11px] text-[#335249]">
+                      Выберите питомца для просмотра медкарты или добавьте нового члена семьи
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleStartAddNewPet}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 transition-snappy cursor-pointer ${
+                      selectedPetId === 'new'
+                        ? 'bg-[#F97316] text-white shadow-xs'
+                        : 'bg-white border border-[#0D9488] text-[#0D9488] hover:bg-[#E6F4F1]'
+                    }`}
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Добавить питомца</span>
+                  </button>
+                </div>
+
+                {petsList.length > 0 && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {petsList.map((pet) => {
+                      const isSelected = selectedPetId === pet.id;
+                      return (
+                        <div
+                          key={pet.id || pet.petName}
+                          onClick={() => {
+                            setSavedBanner('');
+                            applyPetToForm(pet);
+                          }}
+                          className={`rounded-xl border p-3 flex items-center justify-between gap-2 transition-snappy cursor-pointer ${
+                            isSelected
+                              ? 'bg-[#E6F4F1] border-[#0D9488] shadow-xs'
+                              : 'bg-white border-[#D1EAE4] hover:border-[#0D9488]/60'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div
+                              className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 font-bold text-xs ${
+                                isSelected
+                                  ? 'bg-[#0D9488] text-white'
+                                  : 'bg-[#F4FAF8] text-[#0D9488]'
+                              }`}
+                            >
+                              <PawPrint className="w-4 h-4" />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="text-xs font-bold text-[#0F2922] truncate flex items-center gap-1.5">
+                                <span>«{pet.petName}»</span>
+                                <span className="px-1.5 py-0.5 rounded-md bg-white/80 border border-[#CFE2DA] text-[10px] font-semibold text-[#335249]">
+                                  {pet.petSpecies}
+                                </span>
+                              </div>
+                              <div className="text-[11px] text-[#335249] truncate">
+                                {pet.breedAndAge || 'Порода не указана'}
+                                {pet.weightKg ? ` · ${pet.weightKg} кг` : ''}
+                              </div>
+                            </div>
+                          </div>
+
+                          {petsList.length > 1 && pet.id && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setConfirmDeletePetId(
+                                  confirmDeletePetId === pet.id ? null : pet.id!
+                                );
+                              }}
+                              className="p-1.5 rounded-lg text-[#335249] hover:text-red-600 hover:bg-red-50 transition-snappy shrink-0 cursor-pointer"
+                              title={`Удалить карточку питомца «${pet.petName}»`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Подтверждение удаления карточки отдельного питомца */}
+                {confirmDeletePetId && (
+                  <div className="rounded-xl bg-red-50 border border-red-200 p-3 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <span className="text-red-900 font-medium">
+                      Удалить карточку питомца{' '}
+                      <strong>
+                        «{petsList.find((p) => p.id === confirmDeletePetId)?.petName}»
+                      </strong>{' '}
+                      из вашего списка?
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeletePetId(null)}
+                        className="px-2.5 py-1 rounded-lg bg-white border border-red-200 text-slate-700 font-semibold cursor-pointer"
+                      >
+                        Отмена
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const targetPet = petsList.find(
+                            (p) => p.id === confirmDeletePetId
+                          );
+                          if (targetPet) handleConfirmDeletePet(targetPet);
+                        }}
+                        className="px-3 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white font-bold cursor-pointer"
+                      >
+                        Да, удалить питомца
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <div className="rounded-xl bg-[#F4FAF8] border border-[#D1EAE4] p-4 flex items-start justify-between gap-3">
                 <div className="flex items-start gap-3">
                   <div className="w-10 h-10 rounded-xl bg-[#E6F4F1] text-[#0D9488] flex items-center justify-center shrink-0">
@@ -380,14 +646,18 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
                   </div>
                   <div>
                     <h4 className="text-sm font-bold text-[#0F2922]">
-                      Электронный паспорт пациента «Лапа Помощи»
+                      {selectedPetId === 'new'
+                        ? 'Добавление нового питомца в личный кабинет'
+                        : `Электронный паспорт пациента «${petName || 'Питомец'}»`}
                     </h4>
                     <p className="text-xs text-[#335249] mt-0.5">
-                      Сохраните данные питомца один раз — они будут автоматически заполняться при каждой новой записи на прием.
+                      {selectedPetId === 'new'
+                        ? 'Заполните карточку второго или следующего питомца — при записи на прием вы сможете выбирать любого из своих питомцев в 1 клик.'
+                        : 'Данные этого питомца автоматически подставляются при выборе его карточки в окне записи на прием.'}
                     </p>
                   </div>
                 </div>
-                {profileUpdatedAt && (
+                {profileUpdatedAt && selectedPetId !== 'new' && (
                   <span className="text-[11px] font-semibold text-[#0D9488] bg-[#E6F4F1] px-2.5 py-1 rounded-lg whitespace-nowrap">
                     Обновлено: {profileUpdatedAt}
                   </span>
@@ -411,7 +681,7 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
                     required
                     value={petName}
                     onChange={(e) => setPetName(e.target.value)}
-                    placeholder="Например, Персик или Ричард"
+                    placeholder="Например, Персик, Арчи или Буся"
                     className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#D1EAE4] bg-white text-[#0F2922] focus:outline-none focus:border-[#0D9488]"
                   />
                 </div>
@@ -512,7 +782,11 @@ export const SavedAppointmentsModal: React.FC<SavedAppointmentsModalProps> = ({
                   className="py-2.5 px-5 rounded-xl bg-[#0D9488] hover:bg-[#0F766E] text-white text-xs font-bold inline-flex items-center gap-2 cursor-pointer"
                 >
                   <Save className="w-4 h-4" />
-                  <span>Сохранить медкарту питомца</span>
+                  <span>
+                    {selectedPetId === 'new'
+                      ? 'Добавить питомца в кабинет'
+                      : `Сохранить медкарту «${petName || 'питомца'}»`}
+                  </span>
                 </button>
               </div>
             </form>

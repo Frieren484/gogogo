@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  AlertTriangle,
   CheckCircle2,
   ChevronDown,
   Eye,
@@ -8,9 +9,11 @@ import {
   Lock,
   LogIn,
   LogOut,
+  RotateCcw,
   ShieldAlert,
   ShieldCheck,
   Stethoscope,
+  Trash2,
   UserCheck,
   UserPlus,
   Users,
@@ -19,11 +22,16 @@ import {
 import {
   AppUserProfile,
   authenticateWithCredentials,
+  ClientAccountConfig,
+  deleteAccountWithRoleCheck,
+  DoctorAccountConfig,
+  getActivePresetClients,
+  getActivePresetDoctors,
+  getDeletedAccountLogins,
   getRegisteredAccounts,
-  PRESET_CLIENTS,
-  PRESET_DOCTORS,
   RegisteredAccount,
   registerNewClientAccount,
+  restoreAllDeletedAccounts,
   signOutAccount,
 } from '../services/authService';
 
@@ -64,9 +72,35 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [customRegisteredAccounts, setCustomRegisteredAccounts] = useState<RegisteredAccount[]>(
     () => getRegisteredAccounts()
   );
+  const [activePresetClients, setActivePresetClients] = useState<ClientAccountConfig[]>(
+    () => getActivePresetClients()
+  );
+  const [activePresetDoctors, setActivePresetDoctors] = useState<DoctorAccountConfig[]>(
+    () => getActivePresetDoctors()
+  );
+  const [deletedLoginsCount, setDeletedLoginsCount] = useState<number>(
+    () => getDeletedAccountLogins().length
+  );
+
+  // Состояние предупреждения перед удалением аккаунта
+  const [pendingDeleteTarget, setPendingDeleteTarget] = useState<{
+    uid?: string;
+    login: string;
+    role: 'user' | 'doctor' | 'admin';
+    displayName: string;
+    isSelf: boolean;
+  } | null>(null);
+  const [doctorDeleteWarningVisible, setDoctorDeleteWarningVisible] = useState(false);
 
   const [errorMessage, setErrorMessage] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
+
+  const refreshAccountLists = () => {
+    setCustomRegisteredAccounts(getRegisteredAccounts());
+    setActivePresetClients(getActivePresetClients());
+    setActivePresetDoctors(getActivePresetDoctors());
+    setDeletedLoginsCount(getDeletedAccountLogins().length);
+  };
 
   useEffect(() => {
     if (isOpen) {
@@ -76,11 +110,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       setFilledAccountLabel(null);
       setErrorMessage('');
       setStatusMessage('');
-      setCustomRegisteredAccounts(getRegisteredAccounts());
+      setPendingDeleteTarget(null);
+      setDoctorDeleteWarningVisible(false);
+      refreshAccountLists();
     }
   }, [isOpen, initialMode]);
 
   if (!isOpen) return null;
+
+  const isAdmin = currentUser.role === 'admin' && currentUser.login === '1';
 
   const performLogin = (login: string, pass: string) => {
     setErrorMessage('');
@@ -113,7 +151,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   /**
    * Подставляет логин и пароль выбранного пользователя прямо в поля формы входа
-   * (по требованию: "нажимаешь на определённого и подставляется логин и пароль")
    */
   const handleFillCredentials = (login: string, pass: string, label: string) => {
     setErrorMessage('');
@@ -150,8 +187,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       return;
     }
 
-    // Сразу обновляем список зарегистрированных клиентов для выдвижной вкладки «Клиенты»
-    setCustomRegisteredAccounts(getRegisteredAccounts());
+    refreshAccountLists();
     onUserChanged(result.user);
 
     setRegFullName('');
@@ -169,12 +205,46 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   const handleLogout = async () => {
     setErrorMessage('');
+    setPendingDeleteTarget(null);
+    setDoctorDeleteWarningVisible(false);
     const guest = await signOutAccount();
     onUserChanged(guest);
     setStatusMessage('Вы вышли из учетной записи.');
   };
 
-  const totalClientsCount = PRESET_CLIENTS.length + customRegisteredAccounts.length;
+  const handleConfirmAccountDelete = () => {
+    if (!pendingDeleteTarget) return;
+    setErrorMessage('');
+    setStatusMessage('');
+
+    const res = deleteAccountWithRoleCheck(currentUser, {
+      uid: pendingDeleteTarget.uid,
+      login: pendingDeleteTarget.login,
+      role: pendingDeleteTarget.role,
+      displayName: pendingDeleteTarget.displayName,
+    });
+
+    if (!res.ok) {
+      setErrorMessage(res.error);
+      setPendingDeleteTarget(null);
+      return;
+    }
+
+    refreshAccountLists();
+    if (res.signedOutCurrentUser) {
+      onUserChanged(res.nextActiveUser);
+    }
+    setPendingDeleteTarget(null);
+    setStatusMessage(res.message);
+  };
+
+  const handleRestoreDeletedAccounts = () => {
+    restoreAllDeletedAccounts();
+    refreshAccountLists();
+    setStatusMessage('Все ранее удаленные демо-аккаунты клиентов и врачей восстановлены.');
+  };
+
+  const totalClientsCount = activePresetClients.length + customRegisteredAccounts.length;
 
   return (
     <div
@@ -183,7 +253,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       aria-modal="true"
       aria-labelledby="auth-modal-title"
     >
-      <div className="relative w-full max-w-[540px] rounded-2xl bg-[#FCFBF7] border border-[#CFE2DA] shadow-2xl overflow-hidden my-6">
+      <div className="relative w-full max-w-[560px] rounded-2xl bg-[#FCFBF7] border border-[#CFE2DA] shadow-2xl overflow-hidden my-6">
         {/* Top Header */}
         <div className="flex items-center justify-between px-6 pt-6 pb-4 bg-[#EEF5F1] border-b border-[#CFE2DA]">
           <div className="flex items-center gap-3.5">
@@ -195,10 +265,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 id="auth-modal-title"
                 className="text-lg font-bold text-[#122B24] tracking-tight leading-snug"
               >
-                Вход в личный кабинет
+                Вход и управление аккаунтом
               </h2>
               <p className="text-xs text-[#35524A]">
-                Выдвижные списки демо-аккаунтов для клиентов, 8 врачей и администратора
+                Клиент может удалить свой аккаунт · Врач не может · Админ управляет всеми
               </p>
             </div>
           </div>
@@ -220,37 +290,148 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             </div>
           )}
 
-          {/* Active Account Pill if logged in */}
+          {/* Active Account Card if logged in */}
           {currentUser.authSource !== 'guest' && (
-            <div className="mx-6 mb-4 rounded-xl bg-[#EEF5F1] border border-[#CFE2DA] p-3 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <img
-                  src={currentUser.photoURL}
-                  alt={currentUser.displayName}
-                  className="w-8 h-8 rounded-full border border-[#CFE2DA] object-cover shrink-0"
-                />
-                <div className="min-w-0">
-                  <div className="text-xs font-bold text-[#122B24] truncate">
-                    {currentUser.displayName}
-                  </div>
-                  <div className="text-[11px] text-[#35524A] truncate">
-                    Роль:{' '}
-                    {currentUser.role === 'admin'
-                      ? 'Администратор CRM'
-                      : currentUser.role === 'doctor'
-                      ? 'Врач клиники'
-                      : 'Клиент клиники'}
+            <div className="mx-6 mb-4 rounded-xl bg-[#EEF5F1] border border-[#CFE2DA] p-3 space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <img
+                    src={currentUser.photoURL}
+                    alt={currentUser.displayName}
+                    className="w-8 h-8 rounded-full border border-[#CFE2DA] object-cover shrink-0"
+                  />
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold text-[#122B24] truncate">
+                      {currentUser.displayName}
+                    </div>
+                    <div className="text-[11px] text-[#35524A] truncate">
+                      Роль:{' '}
+                      {currentUser.role === 'admin'
+                        ? 'Администратор CRM (может удалить любой аккаунт)'
+                        : currentUser.role === 'doctor'
+                        ? 'Врач клиники (удаление своего аккаунта запрещено)'
+                        : 'Клиент клиники (может удалить свой аккаунт)'}
+                    </div>
                   </div>
                 </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {/* Клиент может удалить свой собственный аккаунт */}
+                  {currentUser.role === 'user' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDoctorDeleteWarningVisible(false);
+                        setPendingDeleteTarget({
+                          uid: currentUser.uid,
+                          login: currentUser.login || currentUser.uid,
+                          role: 'user',
+                          displayName: currentUser.displayName,
+                          isSelf: true,
+                        });
+                      }}
+                      className="py-1 px-2.5 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-[11px] font-bold text-red-700 inline-flex items-center gap-1 transition-snappy cursor-pointer"
+                      title="Удалить свой собственный аккаунт клиента"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      <span>Удалить мой аккаунт</span>
+                    </button>
+                  )}
+
+                  {/* Врач НЕ может удалить свой аккаунт — показываем кнопку с замком и предупреждением */}
+                  {currentUser.role === 'doctor' && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setDoctorDeleteWarningVisible((prev) => !prev)
+                      }
+                      className="py-1 px-2.5 rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 text-[11px] font-bold text-amber-900 inline-flex items-center gap-1 transition-snappy cursor-pointer"
+                      title="Врачи не могут самостоятельно удалять свой служебный аккаунт"
+                    >
+                      <Lock className="w-3 h-3 text-amber-700" />
+                      <span>Удалить аккаунт (Запрещено)</span>
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    className="py-1 px-2.5 rounded-lg border border-[#CFE2DA] bg-white hover:bg-red-50 text-[11px] font-semibold text-[#35524A] hover:text-red-600 inline-flex items-center gap-1 transition-snappy cursor-pointer"
+                  >
+                    <LogOut className="w-3 h-3" />
+                    <span>Выйти</span>
+                  </button>
+                </div>
               </div>
-              <button
-                type="button"
-                onClick={handleLogout}
-                className="py-1 px-2.5 rounded-lg border border-[#CFE2DA] bg-white hover:bg-red-50 text-[11px] font-semibold text-[#35524A] hover:text-red-600 inline-flex items-center gap-1 transition-snappy cursor-pointer"
-              >
-                <LogOut className="w-3 h-3" />
-                <span>Выйти</span>
-              </button>
+
+              {/* Предупреждение для врача при попытке удалить аккаунт */}
+              {currentUser.role === 'doctor' && doctorDeleteWarningVisible && (
+                <div className="rounded-xl bg-amber-50 border border-amber-300 p-3 text-xs text-amber-950 space-y-1">
+                  <div className="font-extrabold flex items-center gap-1.5 text-amber-900">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>Предупреждение безопасности: удаление аккаунта недоступно</span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed">
+                    Врачам клиники запрещено самостоятельно удалять свою служебную учетную запись, так как к профилю врача привязаны действующее расписание дежурств 2/2 и медицинские карты пациентов. Удалить аккаунт врача может только <strong>Главный администратор CRM</strong>.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Модальный блок предупреждения и подтверждения удаления аккаунта (для Клиента или Администратора) */}
+          {pendingDeleteTarget && (
+            <div className="mx-6 mb-4 rounded-xl bg-red-50 border-2 border-red-300 p-3.5 space-y-2.5">
+              <div className="flex items-start gap-2.5">
+                <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <div className="text-xs font-extrabold text-red-900">
+                    {pendingDeleteTarget.isSelf
+                      ? 'Предупреждение: удаление вашего личного аккаунта'
+                      : `Предупреждение администратора: удаление аккаунта (${
+                          pendingDeleteTarget.role === 'doctor' ? 'Врач' : 'Клиент'
+                        })`}
+                  </div>
+                  <p className="text-xs text-red-800 leading-relaxed">
+                    {pendingDeleteTarget.isSelf ? (
+                      <>
+                        Вы действительно хотите удалить свой аккаунт{' '}
+                        <strong>«{pendingDeleteTarget.displayName}»</strong> (логин:{' '}
+                        <span className="font-mono font-bold">{pendingDeleteTarget.login}</span>)?
+                        Профиль клиента и привязанная электронная медкарта питомца будут удалены, а вы будете переведены в гостевой режим.
+                      </>
+                    ) : (
+                      <>
+                        Вы собираетесь принудительно удалить учетную запись{' '}
+                        <strong>«{pendingDeleteTarget.displayName}»</strong> (логин:{' '}
+                        <span className="font-mono font-bold">{pendingDeleteTarget.login}</span>, роль:{' '}
+                        <strong>{pendingDeleteTarget.role === 'doctor' ? 'Врач' : 'Клиент'}</strong>).
+                        Пользователь больше не сможет войти в систему под этим логином.
+                      </>
+                    )}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setPendingDeleteTarget(null)}
+                  className="px-3 py-1.5 rounded-lg bg-white border border-red-200 hover:bg-slate-50 text-xs font-bold text-slate-700 cursor-pointer"
+                >
+                  Отмена
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmAccountDelete}
+                  className="px-3.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer shadow-xs"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>
+                    {pendingDeleteTarget.isSelf
+                      ? 'Да, удалить мой аккаунт'
+                      : 'Подтвердить удаление аккаунта'}
+                  </span>
+                </button>
+              </div>
             </div>
           )}
 
@@ -307,14 +488,27 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <div className="px-6 pb-6 space-y-4">
               {/* EXPANDABLE DEMO DRAWERS FOR CLIENTS, DOCTORS, AND ADMIN */}
               <div className="rounded-xl bg-[#EEF5F1] border border-[#CFE2DA] p-3.5 space-y-2.5">
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-1.5 text-xs font-bold text-[#122B24]">
                     <KeyRound className="w-3.5 h-3.5 text-[#0D9488] shrink-0" />
                     <span>Выдвижные списки аккаунтов (нажмите для подстановки):</span>
                   </div>
-                  <span className="text-[10px] font-semibold text-[#0F766E] bg-[#DCECE5] px-2 py-0.5 rounded-md">
-                    Демо-режим
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    {isAdmin && deletedLoginsCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleRestoreDeletedAccounts}
+                        className="text-[10px] font-bold text-blue-800 bg-blue-100 hover:bg-blue-200 px-2 py-0.5 rounded-md inline-flex items-center gap-1 cursor-pointer"
+                        title="Восстановить удаленные демо-аккаунты"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        <span>Восстановить удаленные ({deletedLoginsCount})</span>
+                      </button>
+                    )}
+                    <span className="text-[10px] font-semibold text-[#0F766E] bg-[#DCECE5] px-2 py-0.5 rounded-md">
+                      {isAdmin ? 'Режим Админа (доступно удаление)' : 'Демо-режим'}
+                    </span>
+                  </div>
                 </div>
 
                 {/* DRAWER 1: CLIENTS (Preset + Newly Registered) */}
@@ -353,6 +547,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       {/* Newly registered accounts first so they are immediately accessible */}
                       {customRegisteredAccounts.map((acc) => {
                         const isSelected = loginInput === acc.login;
+                        const canDeleteThis =
+                          isAdmin ||
+                          (currentUser.role === 'user' &&
+                            (currentUser.uid === acc.uid ||
+                              currentUser.login === acc.login));
                         return (
                           <div
                             key={acc.uid}
@@ -391,27 +590,54 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                                 <strong>{acc.password}</strong>
                               </div>
                             </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                handleQuickInstantLogin(
-                                  acc.login,
-                                  acc.password,
-                                  `Новорег: ${acc.displayName}`
-                                )
-                              }
-                              className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold shrink-0 cursor-pointer"
-                              title="Подставить и сразу войти"
-                            >
-                              Войти →
-                            </button>
+                            <div className="flex items-center gap-1 shrink-0">
+                              {canDeleteThis && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setPendingDeleteTarget({
+                                      uid: acc.uid,
+                                      login: acc.login,
+                                      role: 'user',
+                                      displayName: acc.displayName,
+                                      isSelf:
+                                        currentUser.role === 'user' &&
+                                        (currentUser.uid === acc.uid ||
+                                          currentUser.login === acc.login),
+                                    })
+                                  }
+                                  className="p-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 cursor-pointer"
+                                  title="Удалить аккаунт с подтверждением"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleQuickInstantLogin(
+                                    acc.login,
+                                    acc.password,
+                                    `Новорег: ${acc.displayName}`
+                                  )
+                                }
+                                className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold shrink-0 cursor-pointer"
+                                title="Подставить и сразу войти"
+                              >
+                                Войти →
+                              </button>
+                            </div>
                           </div>
                         );
                       })}
 
                       {/* Preset Demo Clients */}
-                      {PRESET_CLIENTS.map((client, idx) => {
+                      {activePresetClients.map((client, idx) => {
                         const isSelected = loginInput === client.login;
+                        const canDeleteThis =
+                          isAdmin ||
+                          (currentUser.role === 'user' &&
+                            currentUser.login === client.login);
                         return (
                           <div
                             key={client.login}
@@ -445,20 +671,42 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                                 <strong>123</strong>
                               </div>
                             </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                handleQuickInstantLogin(
-                                  client.login,
-                                  '123',
-                                  `Клиент: ${client.displayName}`
-                                )
-                              }
-                              className="px-2.5 py-1.5 rounded-lg bg-[#0D9488] hover:bg-[#0F766E] text-white text-[11px] font-bold shrink-0 cursor-pointer"
-                              title="Подставить и сразу войти"
-                            >
-                              Войти →
-                            </button>
+                            <div className="flex items-center gap-1 shrink-0">
+                              {canDeleteThis && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setPendingDeleteTarget({
+                                      uid: `client-${client.login}`,
+                                      login: client.login,
+                                      role: 'user',
+                                      displayName: client.displayName,
+                                      isSelf:
+                                        currentUser.role === 'user' &&
+                                        currentUser.login === client.login,
+                                    })
+                                  }
+                                  className="p-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 cursor-pointer"
+                                  title="Удалить аккаунт с подтверждением"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleQuickInstantLogin(
+                                    client.login,
+                                    '123',
+                                    `Клиент: ${client.displayName}`
+                                  )
+                                }
+                                className="px-2.5 py-1.5 rounded-lg bg-[#0D9488] hover:bg-[#0F766E] text-white text-[11px] font-bold shrink-0 cursor-pointer"
+                                title="Подставить и сразу войти"
+                              >
+                                Войти →
+                              </button>
+                            </div>
                           </div>
                         );
                       })}
@@ -478,7 +726,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     <div className="flex items-center gap-2">
                       <Stethoscope className="w-4 h-4 text-amber-600" />
                       <span className="text-xs font-bold text-[#122B24]">
-                        Врачи клиники ({PRESET_DOCTORS.length} специалистов)
+                        Врачи клиники ({activePresetDoctors.length} специалистов)
                       </span>
                     </div>
                     <ChevronDown
@@ -491,10 +739,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   {openDrawer === 'doctors' && (
                     <div className="px-3 pb-3 pt-1 border-t border-[#CFE2DA]/70 space-y-1.5 max-h-56 overflow-y-auto">
                       <div className="text-[11px] text-[#35524A] mb-1">
-                        Нажмите на врача для подстановки логина и пароля (пароль всех врачей: 123):
+                        Нажмите на врача для подстановки логина и пароля (пароль всех врачей: 123). Врачи не могут сами удалять свой аккаунт — только Администратор:
                       </div>
 
-                      {PRESET_DOCTORS.map((doc) => {
+                      {activePresetDoctors.map((doc) => {
                         const isSelected = loginInput === doc.login;
                         return (
                           <div
@@ -534,19 +782,39 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                                 Логин: <strong>{doc.login}</strong> · Пароль: <strong>123</strong>
                               </div>
                             </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                handleQuickInstantLogin(
-                                  doc.login,
-                                  '123',
-                                  `Врач: ${doc.displayName}`
-                                )
-                              }
-                              className="px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-[11px] font-bold shrink-0 cursor-pointer"
-                            >
-                              Войти →
-                            </button>
+                            <div className="flex items-center gap-1 shrink-0">
+                              {isAdmin && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setPendingDeleteTarget({
+                                      uid: `doctor-${doc.doctorId}`,
+                                      login: doc.login,
+                                      role: 'doctor',
+                                      displayName: doc.displayName,
+                                      isSelf: false,
+                                    })
+                                  }
+                                  className="p-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 cursor-pointer"
+                                  title="Удалить учетную запись врача (право Администратора)"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleQuickInstantLogin(
+                                    doc.login,
+                                    '123',
+                                    `Врач: ${doc.displayName}`
+                                  )
+                                }
+                                className="px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-[11px] font-bold shrink-0 cursor-pointer"
+                              >
+                                Войти →
+                              </button>
+                            </div>
                           </div>
                         );
                       })}

@@ -66,6 +66,7 @@ import {
   getClientPetProfile,
   getRegisteredAccounts,
   getStoredUserProfile,
+  restoreAllDeletedAccounts,
   saveUserProfile,
   syncPetProfilesFromCloud,
   syncRegisteredAccountsFromCloud,
@@ -173,6 +174,9 @@ const TRUST_BADGES = [
 
 export function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [activePageTab, setActivePageTab] = useState<'home' | 'doctors' | 'reviews'>('home');
+  const [doctorSearch, setDoctorSearch] = useState('');
+  const [doctorSpecialtyFilter, setDoctorSpecialtyFilter] = useState<'all' | 'therapy' | 'surgery' | 'diagnostics' | 'exotic'>('all');
 
   // Role-Based Auth Session State
   const [currentUser, setCurrentUser] = useState<AppUserProfile>(() =>
@@ -910,6 +914,7 @@ export function App() {
 
   // Reset all demo data to factory defaults
   const handleResetDemoData = () => {
+    restoreAllDeletedAccounts();
     const cleanInitial = INITIAL_APPOINTMENTS_DATA.map((item) => ({
       ...item,
       estimatedPrice: resolveAppointmentPrice(item, SERVICES_DATA),
@@ -952,10 +957,11 @@ export function App() {
     if (record?.serviceTitle) {
       setNewReviewService(record.serviceTitle);
     }
+    setActivePageTab('reviews');
     setReviewFormOpen(true);
     setTimeout(() => {
-      document.getElementById('reviews')?.scrollIntoView({ behavior: 'smooth' });
-    }, 100);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }, 80);
   };
 
   const handleAddReviewSubmit = (e: React.FormEvent) => {
@@ -1154,9 +1160,13 @@ export function App() {
       <header className="sticky top-0 z-40 bg-[#EAF2EE]/95 backdrop-blur-md border-b border-[#CFE2DA]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between gap-3">
           {/* Brand Logo */}
-          <a
-            href="#"
-            className="flex items-center gap-2.5 group focus:outline-none shrink-0"
+          <button
+            type="button"
+            onClick={() => {
+              setActivePageTab('home');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+            className="flex items-center gap-2.5 group focus:outline-none shrink-0 text-left cursor-pointer"
           >
             <div className="w-10 h-10 rounded-xl bg-[#0D9488] text-white flex items-center justify-center shadow-sm group-hover:bg-[#0F766E] transition-snappy shrink-0">
               <PawPrint className="w-5 h-5" />
@@ -1169,40 +1179,80 @@ export function App() {
                 Ветеринарный центр · {CLINIC_INFO.city}
               </div>
             </div>
-          </a>
+          </button>
 
-          {/* Desktop Navigation */}
-          <nav className="hidden xl:flex items-center gap-4 2xl:gap-6 text-xs 2xl:text-sm font-semibold text-[#3D5B52] min-w-0">
-            <a
-              href="#services"
-              className="hover:text-[#0D9488] transition-snappy whitespace-nowrap"
+          {/* Desktop Navigation Tabs */}
+          <nav className="hidden xl:flex items-center gap-2 2xl:gap-3 text-xs 2xl:text-sm font-semibold text-[#3D5B52] min-w-0">
+            <button
+              type="button"
+              onClick={() => {
+                setActivePageTab('home');
+                setTimeout(() => {
+                  document.getElementById('services')?.scrollIntoView({ behavior: 'smooth' });
+                }, 60);
+              }}
+              className={`px-3 py-2 rounded-xl transition-snappy whitespace-nowrap cursor-pointer ${
+                activePageTab === 'home'
+                  ? 'bg-[#DFECE6] text-[#0F766E] font-bold'
+                  : 'hover:text-[#0D9488] hover:bg-[#DFECE6]/50'
+              }`}
             >
               Услуги и цены
-            </a>
-            <a
-              href="#calculator"
-              className="hover:text-[#0D9488] transition-snappy whitespace-nowrap"
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActivePageTab('home');
+                setTimeout(() => {
+                  document.getElementById('calculator')?.scrollIntoView({ behavior: 'smooth' });
+                }, 60);
+              }}
+              className="px-3 py-2 rounded-xl hover:text-[#0D9488] hover:bg-[#DFECE6]/50 transition-snappy whitespace-nowrap cursor-pointer"
             >
               Калькулятор
-            </a>
-            <a
-              href="#doctors"
-              className="hover:text-[#0D9488] transition-snappy whitespace-nowrap"
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActivePageTab('doctors');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              className={`px-3.5 py-2 rounded-xl transition-snappy whitespace-nowrap cursor-pointer inline-flex items-center gap-1.5 ${
+                activePageTab === 'doctors'
+                  ? 'bg-[#0D9488] text-white font-bold shadow-xs'
+                  : 'bg-[#FCFBF7] border border-[#CFE2DA] text-[#132A23] hover:border-[#0D9488]'
+              }`}
             >
-              Врачи ({doctorsList.length})
-            </a>
-            <a
-              href="#reviews"
-              className="hover:text-[#0D9488] transition-snappy whitespace-nowrap"
+              <Stethoscope className="w-3.5 h-3.5" />
+              <span>Врачи ({doctorsList.length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActivePageTab('reviews');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              className={`px-3.5 py-2 rounded-xl transition-snappy whitespace-nowrap cursor-pointer inline-flex items-center gap-1.5 ${
+                activePageTab === 'reviews'
+                  ? 'bg-[#0D9488] text-white font-bold shadow-xs'
+                  : 'bg-[#FCFBF7] border border-[#CFE2DA] text-[#132A23] hover:border-[#0D9488]'
+              }`}
             >
-              Отзывы ({reviews.length})
-            </a>
-            <a
-              href="#contacts"
-              className="hover:text-[#0D9488] transition-snappy whitespace-nowrap"
+              <Star className="w-3.5 h-3.5" />
+              <span>Отзывы ({reviews.length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActivePageTab('home');
+                setTimeout(() => {
+                  document.getElementById('contacts')?.scrollIntoView({ behavior: 'smooth' });
+                }, 60);
+              }}
+              className="px-3 py-2 rounded-xl hover:text-[#0D9488] hover:bg-[#DFECE6]/50 transition-snappy whitespace-nowrap cursor-pointer"
             >
               Контакты
-            </a>
+            </button>
           </nav>
 
           {/* Actions & Role Auth Controls */}
@@ -1350,42 +1400,59 @@ export function App() {
         {/* Mobile Drawer */}
         {mobileMenuOpen && (
           <div className="lg:hidden bg-[#FCFBF7] border-b border-[#CFE2DA] px-6 py-5 space-y-4">
-            <div className="flex flex-col space-y-3 text-sm font-semibold text-[#132A23]">
-              <a
-                href="#services"
-                onClick={() => setMobileMenuOpen(false)}
-                className="py-1.5 hover:text-[#0D9488]"
+            <div className="flex flex-col space-y-2 text-sm font-semibold text-[#132A23]">
+              <button
+                type="button"
+                onClick={() => {
+                  setActivePageTab('home');
+                  setMobileMenuOpen(false);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                className={`py-2 px-3 rounded-xl text-left ${
+                  activePageTab === 'home' ? 'bg-[#0D9488] text-white font-bold' : 'hover:bg-[#DFECE6]'
+                }`}
               >
-                Услуги и закрепленные врачи
-              </a>
-              <a
-                href="#calculator"
-                onClick={() => setMobileMenuOpen(false)}
-                className="py-1.5 hover:text-[#0D9488]"
+                Главная, услуги и калькулятор
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActivePageTab('doctors');
+                  setMobileMenuOpen(false);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                className={`py-2 px-3 rounded-xl text-left ${
+                  activePageTab === 'doctors' ? 'bg-[#0D9488] text-white font-bold' : 'hover:bg-[#DFECE6]'
+                }`}
               >
-                Калькулятор чек-апа
-              </a>
-              <a
-                href="#doctors"
-                onClick={() => setMobileMenuOpen(false)}
-                className="py-1.5 hover:text-[#0D9488]"
+                Вкладка: Команда врачей ({doctorsList.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActivePageTab('reviews');
+                  setMobileMenuOpen(false);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                className={`py-2 px-3 rounded-xl text-left ${
+                  activePageTab === 'reviews' ? 'bg-[#0D9488] text-white font-bold' : 'hover:bg-[#DFECE6]'
+                }`}
               >
-                Команда врачей ({doctorsList.length})
-              </a>
-              <a
-                href="#reviews"
-                onClick={() => setMobileMenuOpen(false)}
-                className="py-1.5 hover:text-[#0D9488]"
-              >
-                Истории выздоровления ({reviews.length})
-              </a>
-              <a
-                href="#contacts"
-                onClick={() => setMobileMenuOpen(false)}
-                className="py-1.5 hover:text-[#0D9488]"
+                Вкладка: Отзывы и истории ({reviews.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActivePageTab('home');
+                  setMobileMenuOpen(false);
+                  setTimeout(() => {
+                    document.getElementById('contacts')?.scrollIntoView({ behavior: 'smooth' });
+                  }, 60);
+                }}
+                className="py-2 px-3 rounded-xl text-left hover:bg-[#DFECE6]"
               >
                 Маршрут и контакты
-              </a>
+              </button>
             </div>
 
             <div className="pt-3 border-t border-[#CFE2DA] flex flex-col sm:flex-row gap-3">
@@ -1502,8 +1569,10 @@ export function App() {
       )}
 
       <main className="flex-1">
-        {/* HERO SECTION */}
-        <section className="relative overflow-hidden pt-8 pb-16 lg:pt-14 lg:pb-24 border-b border-[#CFE2DA] bg-gradient-to-b from-[#EAF2EE] to-[#F3F8F5]">
+        {activePageTab === 'home' && (
+          <>
+            {/* HERO SECTION */}
+            <section className="relative overflow-hidden pt-8 pb-16 lg:pt-14 lg:pb-24 border-b border-[#CFE2DA] bg-gradient-to-b from-[#EAF2EE] to-[#F3F8F5]">
           <div className="max-w-7xl mx-auto px-6 lg:px-8">
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-12 items-center">
               <div className="lg:col-span-7 space-y-6">
@@ -2154,397 +2223,557 @@ export function App() {
           </div>
         </section>
 
-        {/* DOCTORS SECTION */}
-        <section id="doctors" className="py-16 lg:py-24 border-b border-[#CFE2DA] bg-[#EAF2EE]">
-          <div className="max-w-7xl mx-auto px-6 lg:px-8">
-            <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-10">
-              <div>
-                <div className="text-xs font-bold uppercase tracking-wider text-[#0D9488] mb-2">
-                  8 узкопрофильных специалистов · Доказательная медицина
-                </div>
-                <h2
-                  className="font-extrabold text-[#132A23] tracking-tight"
-                  style={{ fontSize: 'clamp(1.75rem, 2.6vw + 0.4rem, 2.5rem)' }}
-                >
-                  Команда ветеринарных врачей
-                </h2>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {isUserAdmin && (
+            {/* QUICK NAVIGATION CARDS TO DEDICATED DOCTORS & REVIEWS TABS */}
+            <section className="py-12 border-b border-[#CFE2DA] bg-[#EAF2EE]">
+              <div className="max-w-7xl mx-auto px-6 lg:px-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="rounded-2xl bg-[#FCFBF7] border border-[#CFE2DA] p-6 sm:p-7 flex flex-col justify-between shadow-xs">
+                  <div>
+                    <div className="text-xs font-bold uppercase tracking-wider text-[#0D9488] mb-1.5">
+                      Отдельная вкладка специалистов
+                    </div>
+                    <h3 className="text-xl font-extrabold text-[#132A23] mb-2">
+                      Команда ветеринарных врачей ({doctorsList.length} специалистов)
+                    </h3>
+                    <p className="text-xs sm:text-sm text-[#3D5B52] leading-relaxed mb-5">
+                      Узкопрофильные врачи клиники: хирурги-эндоскописты, кардиологи, специалисты УЗИ, ратологи и реаниматологи ОРИТ. Поиск по специализации и прямая запись к врачу.
+                    </p>
+                  </div>
                   <button
                     type="button"
-                    onClick={() => setAdminDashboardOpen(true)}
-                    className="py-2.5 px-4 rounded-xl bg-[#0F2922] text-white text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <ShieldCheck className="w-4 h-4 text-[#5EEAD4]" />
-                    <span>Управление штатом и расписанием (Админ)</span>
-                  </button>
-                )}
-                {isUserDoctor && (
-                  <button
-                    type="button"
-                    onClick={() => setDoctorDashboardOpen(true)}
-                    className="py-2.5 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
+                    onClick={() => {
+                      setActivePageTab('doctors');
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                    className="self-start py-3 px-5 rounded-xl bg-[#0D9488] hover:bg-[#0F766E] text-white font-bold text-xs sm:text-sm inline-flex items-center gap-2 transition-snappy cursor-pointer"
                   >
                     <Stethoscope className="w-4 h-4" />
-                    <span>Служебный график врачей (Кабинет врача)</span>
+                    <span>Открыть вкладку «Врачи ({doctorsList.length})» →</span>
                   </button>
-                )}
-              </div>
-            </div>
+                </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              {doctorsList.map((doc) => {
-                return (
-                  <div
-                    key={doc.id}
-                    className="rounded-2xl bg-[#FCFBF7] border border-[#CFE2DA] overflow-hidden flex flex-col justify-between shadow-xs hover:shadow-md transition-snappy"
-                  >
-                    <div>
-                      <div className="relative h-60 bg-[#DFECE6] overflow-hidden">
-                        <img
-                          src={doc.photoUrl}
-                          alt={`${doc.name} — ${doc.role}`}
-                          className="w-full h-full object-cover object-top"
-                        />
-                        <div className="absolute top-3 left-3 flex flex-wrap gap-1.5">
-                          <span className="px-2.5 py-1 rounded-lg bg-[#0F2922]/85 backdrop-blur-xs text-white text-[11px] font-bold tabular-nums">
-                            Стаж {doc.experienceYears} лет
-                          </span>
-                          <span className="px-2.5 py-1 rounded-lg bg-[#0D9488] text-white text-[11px] font-extrabold">
-                            {doc.operationsCount}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="p-5">
-                        <div className="text-xs font-bold text-[#0D9488] uppercase tracking-wider mb-1">
-                          {doc.role}
-                        </div>
-                        <h3 className="text-lg font-extrabold text-[#132A23] mb-2">
-                          {doc.name}
-                        </h3>
-
-                        <p className="text-xs text-[#3D5B52] mb-3 leading-relaxed">
-                          <strong className="text-[#132A23]">Образование:</strong>{' '}
-                          {doc.education}
-                        </p>
-
-                        <blockquote className="text-xs italic text-[#132A23] border-l-2 border-[#0D9488] pl-3 py-1 mb-4 bg-[#EAF2EE]/70 rounded-r-lg">
-                          «{doc.quote}»
-                        </blockquote>
-
-                        <div className="flex flex-wrap gap-1.5">
-                          {doc.specialties.map((spec) => (
-                            <span
-                              key={spec}
-                              className="text-[11px] font-semibold px-2.5 py-1 rounded-md bg-[#DFECE6] text-[#0F766E]"
-                            >
-                              {spec}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
+                <div className="rounded-2xl bg-[#FCFBF7] border border-[#CFE2DA] p-6 sm:p-7 flex flex-col justify-between shadow-xs">
+                  <div>
+                    <div className="text-xs font-bold uppercase tracking-wider text-[#0D9488] mb-1.5">
+                      Отдельная вкладка историй выздоровления
                     </div>
-
-                    <div className="px-5 pb-5 pt-3 border-t border-[#CFE2DA]">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          openBookingWithContext({
-                            doctorName: doc.name,
-                          })
-                        }
-                        className="w-full py-2.5 px-4 rounded-xl bg-[#0D9488] hover:bg-[#0F766E] text-white font-bold text-xs transition-snappy cursor-pointer"
-                      >
-                        Записаться к специалисту
-                      </button>
-                    </div>
+                    <h3 className="text-xl font-extrabold text-[#132A23] mb-2">
+                      Отзывы и клинические истории пациентов ({reviews.length})
+                    </h3>
+                    <p className="text-xs sm:text-sm text-[#3D5B52] leading-relaxed mb-5">
+                      Реальные истории спасения и лечения собак, кошек, кроликов и грызунов с фильтрацией по видам животных и формой публикации собственного отзыва.
+                    </p>
                   </div>
-                );
-              })}
-            </div>
-          </div>
-        </section>
-
-        {/* PATIENT STORIES & VERIFIED REVIEWS */}
-        <section
-          id="reviews"
-          className="py-16 lg:py-24 bg-[#F3F8F5] border-b border-[#CFE2DA]"
-        >
-          <div className="max-w-7xl mx-auto px-6 lg:px-8">
-            <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 mb-12">
-              <div>
-                <div className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#0D9488] mb-2">
-                  <HeartHandshake className="w-4 h-4" />
-                  <span>Истории выздоровления и отзывы владельцев</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActivePageTab('reviews');
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                    className="self-start py-3 px-5 rounded-xl bg-[#0F2922] hover:bg-[#1E3F36] text-white font-bold text-xs sm:text-sm inline-flex items-center gap-2 transition-snappy cursor-pointer"
+                  >
+                    <Star className="w-4 h-4 text-[#5EEAD4]" />
+                    <span>Открыть вкладку «Отзывы ({reviews.length})» →</span>
+                  </button>
                 </div>
-                <h2
-                  className="font-extrabold text-[#132A23] tracking-tight"
-                  style={{ fontSize: 'clamp(1.75rem, 2.6vw + 0.4rem, 2.5rem)' }}
-                >
-                  Реальные клинические случаи наших пациентов
-                </h2>
               </div>
+            </section>
+          </>
+        )}
 
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="px-4 py-2.5 rounded-xl bg-[#FCFBF7] border border-[#CFE2DA] text-xs font-bold text-[#132A23] tabular-nums">
-                  Рейтинг клиники: <span className="text-[#0D9488]">4.9 / 5.0</span>
-                </div>
+        {/* DEDICATED TAB: DOCTORS SECTION */}
+        {activePageTab === 'doctors' && (
+          <section id="doctors" className="py-12 lg:py-16 border-b border-[#CFE2DA] bg-[#EAF2EE]">
+            <div className="max-w-7xl mx-auto px-6 lg:px-8">
+              <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
                 <button
                   type="button"
                   onClick={() => {
-                    if (reviewFormOpen) {
-                      setReviewFormOpen(false);
-                    } else {
-                      openReviewFormWithPrefill();
-                    }
+                    setActivePageTab('home');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
                   }}
-                  className="py-2.5 px-4 rounded-xl bg-[#0D9488] hover:bg-[#0F766E] text-white text-xs font-bold inline-flex items-center gap-2 transition-snappy cursor-pointer"
+                  className="py-2 px-4 rounded-xl bg-[#FCFBF7] border border-[#CFE2DA] hover:border-[#0D9488] text-xs font-bold text-[#132A23] inline-flex items-center gap-2 cursor-pointer"
                 >
-                  <MessageSquarePlus className="w-4 h-4" />
-                  <span>Оставить отзыв о визите</span>
+                  <span>← Вернуться на главную и к услугам</span>
                 </button>
+                <span className="text-xs font-bold text-[#0F766E] bg-[#DFECE6] px-3 py-1.5 rounded-lg">
+                  Раздел 2 из 3 · Штат специалистов клиники
+                </span>
               </div>
-            </div>
 
-            {reviewFormOpen && (
-              <form
-                onSubmit={handleAddReviewSubmit}
-                className="mb-12 rounded-2xl bg-[#FCFBF7] border-2 border-[#0D9488] p-6 sm:p-8 space-y-4"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <h3 className="text-lg font-extrabold text-[#132A23]">
-                    Поделитесь историей лечения вашего питомца
-                  </h3>
-                  <button
-                    type="button"
-                    onClick={() => setReviewFormOpen(false)}
-                    className="text-xs font-semibold text-[#3D5B52] hover:text-[#132A23]"
-                  >
-                    Закрыть
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-[#132A23] mb-1">
-                      Ваше имя *
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={newReviewOwner}
-                      onChange={(e) => setNewReviewOwner(e.target.value)}
-                      placeholder="Например, Ольга К."
-                      className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#CFE2DA] bg-[#EAF2EE] focus:outline-none focus:border-[#0D9488]"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-[#132A23] mb-1">
-                      Кличка питомца *
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={newReviewPetName}
-                      onChange={(e) => setNewReviewPetName(e.target.value)}
-                      placeholder="Например, Персик"
-                      className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#CFE2DA] bg-[#EAF2EE] focus:outline-none focus:border-[#0D9488]"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-[#132A23] mb-1">
-                      Порода и возраст
-                    </label>
-                    <input
-                      type="text"
-                      value={newReviewPetBreed}
-                      onChange={(e) => setNewReviewPetBreed(e.target.value)}
-                      placeholder="Вельш-корги, 3 года"
-                      className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#CFE2DA] bg-[#EAF2EE] focus:outline-none focus:border-[#0D9488]"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-[#132A23] mb-1">
-                      Какую услугу проходили
-                    </label>
-                    <select
-                      value={newReviewService}
-                      onChange={(e) => setNewReviewService(e.target.value)}
-                      className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#CFE2DA] bg-[#EAF2EE] focus:outline-none focus:border-[#0D9488]"
-                    >
-                      {servicesList.map((s) => (
-                        <option key={s.id} value={s.title}>
-                          {s.title}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-[#132A23] mb-1">
-                      Краткий результат (До → После)
-                    </label>
-                    <input
-                      type="text"
-                      value={newReviewOutcome}
-                      onChange={(e) => setNewReviewOutcome(e.target.value)}
-                      placeholder="Например: Провели УЗИ и сняли острую боль за 1 визит"
-                      className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#CFE2DA] bg-[#EAF2EE] focus:outline-none focus:border-[#0D9488]"
-                    />
-                  </div>
-                </div>
-
+              <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-8">
                 <div>
-                  <label className="block text-xs font-bold text-[#132A23] mb-1">
-                    Ваш отзыв о работе врача и клиники *
-                  </label>
-                  <textarea
-                    rows={3}
-                    required
-                    value={newReviewStory}
-                    onChange={(e) => setNewReviewStory(e.target.value)}
-                    placeholder="Расскажите, как прошел прием..."
-                    className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#CFE2DA] bg-[#EAF2EE] focus:outline-none focus:border-[#0D9488]"
-                  />
-                </div>
-
-                <div className="flex justify-end">
-                  <button
-                    type="submit"
-                    className="py-2.5 px-6 rounded-xl bg-[#F97316] hover:bg-[#EA580C] text-white text-sm font-bold cursor-pointer"
+                  <div className="text-xs font-bold uppercase tracking-wider text-[#0D9488] mb-2">
+                    8 узкопрофильных специалистов · Доказательная медицина
+                  </div>
+                  <h1
+                    className="font-extrabold text-[#132A23] tracking-tight"
+                    style={{ fontSize: 'clamp(1.75rem, 2.6vw + 0.4rem, 2.5rem)' }}
                   >
-                    Опубликовать историю
-                  </button>
+                    Команда ветеринарных врачей
+                  </h1>
+                  <p className="text-sm text-[#3D5B52] mt-1.5 max-w-2xl">
+                    Выберите профильного специалиста по направлению лечения или запишитесь на ближайшее свободное окно приёма в один клик.
+                  </p>
                 </div>
-              </form>
-            )}
-
-            {/* Species Segmented Filter Bar */}
-            <div className="mb-8 flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-[#CFE2DA]">
-              <div className="flex flex-wrap items-center gap-2">
-                {(
-                  [
-                    {
-                      id: 'all' as ReviewSpeciesFilter,
-                      label: 'Все истории',
-                      count: reviewSpeciesCounts.all,
-                    },
-                    {
-                      id: 'dogs' as ReviewSpeciesFilter,
-                      label: 'Собаки',
-                      count: reviewSpeciesCounts.dogs,
-                    },
-                    {
-                      id: 'cats' as ReviewSpeciesFilter,
-                      label: 'Кошки',
-                      count: reviewSpeciesCounts.cats,
-                    },
-                    {
-                      id: 'exotic' as ReviewSpeciesFilter,
-                      label: 'Кролики и грызуны',
-                      count: reviewSpeciesCounts.exotic,
-                    },
-                  ] as const
-                ).map((tab) => {
-                  const isActive = reviewSpeciesFilter === tab.id;
-                  return (
+                <div className="flex flex-wrap items-center gap-2">
+                  {isUserAdmin && (
                     <button
-                      key={tab.id}
                       type="button"
-                      onClick={() => setReviewSpeciesFilter(tab.id)}
-                      className={`py-2 px-4 rounded-xl text-xs sm:text-sm font-bold transition-snappy inline-flex items-center gap-2 cursor-pointer ${
-                        isActive
-                          ? 'bg-[#0D9488] text-white shadow-xs'
-                          : 'bg-[#FCFBF7] text-[#3D5B52] border border-[#CFE2DA] hover:border-[#0D9488] hover:text-[#132A23]'
-                      }`}
+                      onClick={() => setAdminDashboardOpen(true)}
+                      className="py-2.5 px-4 rounded-xl bg-[#0F2922] text-white text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
                     >
-                      <span>{tab.label}</span>
-                      <span
-                        className={`px-1.5 py-0.5 rounded-md text-[11px] font-extrabold tabular-nums ${
-                          isActive
-                            ? 'bg-white/20 text-white'
-                            : 'bg-[#DFECE6] text-[#0D9488]'
+                      <ShieldCheck className="w-4 h-4 text-[#5EEAD4]" />
+                      <span>Управление штатом и расписанием (Админ)</span>
+                    </button>
+                  )}
+                  {isUserDoctor && (
+                    <button
+                      type="button"
+                      onClick={() => setDoctorDashboardOpen(true)}
+                      className="py-2.5 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Stethoscope className="w-4 h-4" />
+                      <span>Служебный график врачей (Кабинет врача)</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Filter & Search Bar inside Doctors Tab */}
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-8 pb-5 border-b border-[#CFE2DA]">
+                <div className="flex flex-wrap items-center gap-2">
+                  {(
+                    [
+                      { id: 'all', label: `Все врачи (${doctorsList.length})` },
+                      { id: 'therapy', label: 'Терапия и кардиология' },
+                      { id: 'surgery', label: 'Хирургия и ОРИТ' },
+                      { id: 'diagnostics', label: 'УЗИ и стоматология' },
+                      { id: 'exotic', label: 'Ратология и дерматология' },
+                    ] as const
+                  ).map((tab) => {
+                    const active = doctorSpecialtyFilter === tab.id;
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setDoctorSpecialtyFilter(tab.id)}
+                        className={`py-2 px-3.5 rounded-xl text-xs font-bold transition-snappy cursor-pointer ${
+                          active
+                            ? 'bg-[#0D9488] text-white shadow-xs'
+                            : 'bg-[#FCFBF7] text-[#3D5B52] border border-[#CFE2DA] hover:border-[#0D9488] hover:text-[#132A23]'
                         }`}
                       >
-                        {tab.count}
-                      </span>
-                    </button>
-                  );
-                })}
+                        {tab.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="relative w-full lg:w-72">
+                  <Search className="w-4 h-4 text-[#3D5B52] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={doctorSearch}
+                    onChange={(e) => setDoctorSearch(e.target.value)}
+                    placeholder="Поиск врача по ФИО или профилю..."
+                    className="w-full pl-10 pr-4 py-2 rounded-xl bg-[#FCFBF7] border border-[#CFE2DA] text-xs sm:text-sm text-[#132A23] placeholder:text-[#3D5B52]/60 focus:outline-none focus:border-[#0D9488]"
+                  />
+                </div>
               </div>
 
-              <div className="text-xs text-[#3D5B52] font-medium tabular-nums">
-                Показано клинических историй:{' '}
-                <strong className="text-[#132A23]">{filteredReviews.length}</strong> из{' '}
-                {reviews.length}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
-              {filteredReviews.map((rev) => (
-                <div
-                  key={rev.id}
-                  className="rounded-2xl bg-[#FCFBF7] border border-[#CFE2DA] p-6 flex flex-col justify-between shadow-xs hover:border-[#0D9488]/50 transition-snappy"
-                >
-                  <div>
-                    <div className="flex items-center justify-between gap-3 mb-4">
-                      <div className="flex items-center gap-3.5 min-w-0">
-                        <img
-                          src={rev.photoUrl}
-                          alt={rev.petName}
-                          className="w-12 h-12 rounded-xl object-cover border border-[#CFE2DA] shrink-0"
-                        />
-                        <div className="min-w-0">
-                          <div className="text-sm font-extrabold text-[#132A23] truncate">
-                            {rev.ownerName}
-                          </div>
-                          <div className="text-xs font-semibold text-[#0D9488] truncate">
-                            {rev.petName} · {rev.petBreed}
-                          </div>
-                          {rev.ownerRole && (
-                            <div className="text-[11px] text-[#3D5B52] truncate">
-                              {rev.ownerRole}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                {doctorsList
+                  .filter((doc) => {
+                    const text = `${doc.name} ${doc.role} ${doc.specialties.join(' ')}`.toLowerCase();
+                    if (doctorSearch.trim() && !text.includes(doctorSearch.trim().toLowerCase())) {
+                      return false;
+                    }
+                    if (doctorSpecialtyFilter === 'therapy') {
+                      return text.includes('терап') || text.includes('кардиол') || text.includes('эндокрин');
+                    }
+                    if (doctorSpecialtyFilter === 'surgery') {
+                      return text.includes('хирург') || text.includes('орит') || text.includes('реанимат');
+                    }
+                    if (doctorSpecialtyFilter === 'diagnostics') {
+                      return text.includes('узи') || text.includes('стоматол');
+                    }
+                    if (doctorSpecialtyFilter === 'exotic') {
+                      return text.includes('ратолог') || text.includes('грызун') || text.includes('дерматол');
+                    }
+                    return true;
+                  })
+                  .map((doc) => {
+                    return (
+                      <div
+                        key={doc.id}
+                        className="rounded-2xl bg-[#FCFBF7] border border-[#CFE2DA] overflow-hidden flex flex-col justify-between shadow-xs hover:shadow-md transition-snappy"
+                      >
+                        <div>
+                          <div className="relative h-60 bg-[#DFECE6] overflow-hidden">
+                            <img
+                              src={doc.photoUrl}
+                              alt={`${doc.name} — ${doc.role}`}
+                              className="w-full h-full object-cover object-top"
+                            />
+                            <div className="absolute top-3 left-3 flex flex-wrap gap-1.5">
+                              <span className="px-2.5 py-1 rounded-lg bg-[#0F2922]/85 backdrop-blur-xs text-white text-[11px] font-bold tabular-nums">
+                                Стаж {doc.experienceYears} лет
+                              </span>
+                              <span className="px-2.5 py-1 rounded-lg bg-[#0D9488] text-white text-[11px] font-extrabold">
+                                {doc.operationsCount}
+                              </span>
                             </div>
-                          )}
+                          </div>
+
+                          <div className="p-5">
+                            <div className="text-xs font-bold text-[#0D9488] uppercase tracking-wider mb-1">
+                              {doc.role}
+                            </div>
+                            <h3 className="text-lg font-extrabold text-[#132A23] mb-2">
+                              {doc.name}
+                            </h3>
+
+                            <p className="text-xs text-[#3D5B52] mb-3 leading-relaxed">
+                              <strong className="text-[#132A23]">Образование:</strong>{' '}
+                              {doc.education}
+                            </p>
+
+                            <blockquote className="text-xs italic text-[#132A23] border-l-2 border-[#0D9488] pl-3 py-1 mb-4 bg-[#EAF2EE]/70 rounded-r-lg">
+                              «{doc.quote}»
+                            </blockquote>
+
+                            <div className="flex flex-wrap gap-1.5">
+                              {doc.specialties.map((spec) => (
+                                <span
+                                  key={spec}
+                                  className="text-[11px] font-semibold px-2.5 py-1 rounded-md bg-[#DFECE6] text-[#0F766E]"
+                                >
+                                  {spec}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="px-5 pb-5 pt-3 border-t border-[#CFE2DA]">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              openBookingWithContext({
+                                doctorName: doc.name,
+                              })
+                            }
+                            className="w-full py-2.5 px-4 rounded-xl bg-[#0D9488] hover:bg-[#0F766E] text-white font-bold text-xs transition-snappy cursor-pointer"
+                          >
+                            Записаться к специалисту
+                          </button>
                         </div>
                       </div>
-                      <div className="flex items-center gap-0.5 text-[#F59E0B] shrink-0">
-                        {Array.from({ length: rev.rating }).map((_, idx) => (
-                          <Star
-                            key={idx}
-                            className="w-3.5 h-3.5 fill-[#F59E0B]"
-                          />
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="mb-3 p-3 rounded-xl bg-[#EAF2EE] border border-[#CFE2DA] text-xs font-semibold text-[#0F766E]">
-                      Итог лечения: {rev.beforeAfterOutcome}
-                    </div>
-
-                    <p className="text-xs sm:text-sm text-[#3D5B52] leading-relaxed mb-4">
-                      «{rev.story}»
-                    </p>
-                  </div>
-
-                  <div className="pt-3 border-t border-[#CFE2DA] flex items-center justify-between gap-2 text-[11px] text-[#3D5B52]">
-                    <span className="font-semibold text-[#0D9488] truncate max-w-[72%]">
-                      {rev.serviceUsed}
-                    </span>
-                    <span className="tabular-nums shrink-0">{rev.visitDate}</span>
-                  </div>
-                </div>
-              ))}
+                    );
+                  })}
+              </div>
             </div>
-          </div>
-        </section>
+          </section>
+        )}
 
-        {/* FIRST AID SYMPTOMS & FAQ */}
-        <section className="py-16 lg:py-24 border-b border-[#CFE2DA] bg-[#EAF2EE]">
+        {/* DEDICATED TAB: PATIENT STORIES & VERIFIED REVIEWS */}
+        {activePageTab === 'reviews' && (
+          <section
+            id="reviews"
+            className="py-12 lg:py-16 bg-[#F3F8F5] border-b border-[#CFE2DA]"
+          >
+            <div className="max-w-7xl mx-auto px-6 lg:px-8">
+              <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActivePageTab('home');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                  className="py-2 px-4 rounded-xl bg-[#FCFBF7] border border-[#CFE2DA] hover:border-[#0D9488] text-xs font-bold text-[#132A23] inline-flex items-center gap-2 cursor-pointer"
+                >
+                  <span>← Вернуться на главную и к услугам</span>
+                </button>
+                <span className="text-xs font-bold text-[#0F766E] bg-[#DFECE6] px-3 py-1.5 rounded-lg">
+                  Раздел 3 из 3 · Отзывы и истории пациентов
+                </span>
+              </div>
+
+              <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 mb-10">
+                <div>
+                  <div className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#0D9488] mb-2">
+                    <HeartHandshake className="w-4 h-4" />
+                    <span>Истории выздоровления и отзывы владельцев</span>
+                  </div>
+                  <h1
+                    className="font-extrabold text-[#132A23] tracking-tight"
+                    style={{ fontSize: 'clamp(1.75rem, 2.6vw + 0.4rem, 2.5rem)' }}
+                  >
+                    Реальные клинические случаи наших пациентов
+                  </h1>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="px-4 py-2.5 rounded-xl bg-[#FCFBF7] border border-[#CFE2DA] text-xs font-bold text-[#132A23] tabular-nums">
+                    Рейтинг клиники: <span className="text-[#0D9488]">4.9 / 5.0</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (reviewFormOpen) {
+                        setReviewFormOpen(false);
+                      } else {
+                        openReviewFormWithPrefill();
+                      }
+                    }}
+                    className="py-2.5 px-4 rounded-xl bg-[#0D9488] hover:bg-[#0F766E] text-white text-xs font-bold inline-flex items-center gap-2 transition-snappy cursor-pointer"
+                  >
+                    <MessageSquarePlus className="w-4 h-4" />
+                    <span>Оставить отзыв о визите</span>
+                  </button>
+                </div>
+              </div>
+
+              {reviewFormOpen && (
+                <form
+                  onSubmit={handleAddReviewSubmit}
+                  className="mb-12 rounded-2xl bg-[#FCFBF7] border-2 border-[#0D9488] p-6 sm:p-8 space-y-4"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-lg font-extrabold text-[#132A23]">
+                      Поделитесь историей лечения вашего питомца
+                    </h3>
+                    <button
+                      type="button"
+                      onClick={() => setReviewFormOpen(false)}
+                      className="text-xs font-semibold text-[#3D5B52] hover:text-[#132A23]"
+                    >
+                      Закрыть
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-[#132A23] mb-1">
+                        Ваше имя *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={newReviewOwner}
+                        onChange={(e) => setNewReviewOwner(e.target.value)}
+                        placeholder="Например, Ольга К."
+                        className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#CFE2DA] bg-[#EAF2EE] focus:outline-none focus:border-[#0D9488]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-[#132A23] mb-1">
+                        Кличка питомца *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={newReviewPetName}
+                        onChange={(e) => setNewReviewPetName(e.target.value)}
+                        placeholder="Например, Персик"
+                        className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#CFE2DA] bg-[#EAF2EE] focus:outline-none focus:border-[#0D9488]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-[#132A23] mb-1">
+                        Порода и возраст
+                      </label>
+                      <input
+                        type="text"
+                        value={newReviewPetBreed}
+                        onChange={(e) => setNewReviewPetBreed(e.target.value)}
+                        placeholder="Вельш-корги, 3 года"
+                        className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#CFE2DA] bg-[#EAF2EE] focus:outline-none focus:border-[#0D9488]"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-[#132A23] mb-1">
+                        Какую услугу проходили
+                      </label>
+                      <select
+                        value={newReviewService}
+                        onChange={(e) => setNewReviewService(e.target.value)}
+                        className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#CFE2DA] bg-[#EAF2EE] focus:outline-none focus:border-[#0D9488]"
+                      >
+                        {servicesList.map((s) => (
+                          <option key={s.id} value={s.title}>
+                            {s.title}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-[#132A23] mb-1">
+                        Краткий результат (До → После)
+                      </label>
+                      <input
+                        type="text"
+                        value={newReviewOutcome}
+                        onChange={(e) => setNewReviewOutcome(e.target.value)}
+                        placeholder="Например: Провели УЗИ и сняли острую боль за 1 визит"
+                        className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#CFE2DA] bg-[#EAF2EE] focus:outline-none focus:border-[#0D9488]"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-[#132A23] mb-1">
+                      Ваш отзыв о работе врача и клиники *
+                    </label>
+                    <textarea
+                      rows={3}
+                      required
+                      value={newReviewStory}
+                      onChange={(e) => setNewReviewStory(e.target.value)}
+                      placeholder="Расскажите, как прошел прием..."
+                      className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#CFE2DA] bg-[#EAF2EE] focus:outline-none focus:border-[#0D9488]"
+                    />
+                  </div>
+
+                  <div className="flex justify-end">
+                    <button
+                      type="submit"
+                      className="py-2.5 px-6 rounded-xl bg-[#F97316] hover:bg-[#EA580C] text-white text-sm font-bold cursor-pointer"
+                    >
+                      Опубликовать историю
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {/* Species Segmented Filter Bar */}
+              <div className="mb-8 flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-[#CFE2DA]">
+                <div className="flex flex-wrap items-center gap-2">
+                  {(
+                    [
+                      {
+                        id: 'all' as ReviewSpeciesFilter,
+                        label: 'Все истории',
+                        count: reviewSpeciesCounts.all,
+                      },
+                      {
+                        id: 'dogs' as ReviewSpeciesFilter,
+                        label: 'Собаки',
+                        count: reviewSpeciesCounts.dogs,
+                      },
+                      {
+                        id: 'cats' as ReviewSpeciesFilter,
+                        label: 'Кошки',
+                        count: reviewSpeciesCounts.cats,
+                      },
+                      {
+                        id: 'exotic' as ReviewSpeciesFilter,
+                        label: 'Кролики и грызуны',
+                        count: reviewSpeciesCounts.exotic,
+                      },
+                    ] as const
+                  ).map((tab) => {
+                    const isActive = reviewSpeciesFilter === tab.id;
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setReviewSpeciesFilter(tab.id)}
+                        className={`py-2 px-4 rounded-xl text-xs sm:text-sm font-bold transition-snappy inline-flex items-center gap-2 cursor-pointer ${
+                          isActive
+                            ? 'bg-[#0D9488] text-white shadow-xs'
+                            : 'bg-[#FCFBF7] text-[#3D5B52] border border-[#CFE2DA] hover:border-[#0D9488] hover:text-[#132A23]'
+                        }`}
+                      >
+                        <span>{tab.label}</span>
+                        <span
+                          className={`px-1.5 py-0.5 rounded-md text-[11px] font-extrabold tabular-nums ${
+                            isActive
+                              ? 'bg-white/20 text-white'
+                              : 'bg-[#DFECE6] text-[#0D9488]'
+                          }`}
+                        >
+                          {tab.count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="text-xs text-[#3D5B52] font-medium tabular-nums">
+                  Показано клинических историй:{' '}
+                  <strong className="text-[#132A23]">{filteredReviews.length}</strong> из{' '}
+                  {reviews.length}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
+                {filteredReviews.map((rev) => (
+                  <div
+                    key={rev.id}
+                    className="rounded-2xl bg-[#FCFBF7] border border-[#CFE2DA] p-6 flex flex-col justify-between shadow-xs hover:border-[#0D9488]/50 transition-snappy"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-3 mb-4">
+                        <div className="flex items-center gap-3.5 min-w-0">
+                          <img
+                            src={rev.photoUrl}
+                            alt={rev.petName}
+                            className="w-12 h-12 rounded-xl object-cover border border-[#CFE2DA] shrink-0"
+                          />
+                          <div className="min-w-0">
+                            <div className="text-sm font-extrabold text-[#132A23] truncate">
+                              {rev.ownerName}
+                            </div>
+                            <div className="text-xs font-semibold text-[#0D9488] truncate">
+                              {rev.petName} · {rev.petBreed}
+                            </div>
+                            {rev.ownerRole && (
+                              <div className="text-[11px] text-[#3D5B52] truncate">
+                                {rev.ownerRole}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-0.5 text-[#F59E0B] shrink-0">
+                          {Array.from({ length: rev.rating }).map((_, idx) => (
+                            <Star
+                              key={idx}
+                              className="w-3.5 h-3.5 fill-[#F59E0B]"
+                            />
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="mb-3 p-3 rounded-xl bg-[#EAF2EE] border border-[#CFE2DA] text-xs font-semibold text-[#0F766E]">
+                        Итог лечения: {rev.beforeAfterOutcome}
+                      </div>
+
+                      <p className="text-xs sm:text-sm text-[#3D5B52] leading-relaxed mb-4">
+                        «{rev.story}»
+                      </p>
+                    </div>
+
+                    <div className="pt-3 border-t border-[#CFE2DA] flex items-center justify-between gap-2 text-[11px] text-[#3D5B52]">
+                      <span className="font-semibold text-[#0D9488] truncate max-w-[72%]">
+                        {rev.serviceUsed}
+                      </span>
+                      <span className="tabular-nums shrink-0">{rev.visitDate}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {activePageTab === 'home' && (
+          <>
+            {/* FIRST AID SYMPTOMS & FAQ */}
+            <section className="py-16 lg:py-24 border-b border-[#CFE2DA] bg-[#EAF2EE]">
           <div className="max-w-7xl mx-auto px-6 lg:px-8">
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
               <div className="lg:col-span-6 space-y-5">
@@ -2775,6 +3004,8 @@ export function App() {
             </div>
           </div>
         </section>
+        </>
+        )}
       </main>
 
       {/* FOOTER */}

@@ -1,5 +1,6 @@
 import { AppointmentRecord } from '../data/clinicData';
 import {
+  deleteUserAccountFromCloud,
   sanitizeDocId,
   savePetProfileToCloud,
   saveUserAccountToCloud,
@@ -37,6 +38,8 @@ export interface RegisteredAccount {
 const USER_STORAGE_KEY = 'lapa_pomoshchi_active_user_v3';
 const REGISTERED_ACCOUNTS_KEY = 'lapa_pomoshchi_registered_users_v2';
 const PET_PROFILES_STORAGE_KEY = 'lapa_pomoshchi_pet_profiles_v1';
+const MULTI_PET_PROFILES_STORAGE_KEY = 'lapa_pomoshchi_multi_pets_v1';
+const DELETED_ACCOUNTS_KEY = 'lapa_pomoshchi_deleted_logins_v1';
 
 export function buildAvatarSvgDataUri(initials: string, bgHex: string): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120">
@@ -202,13 +205,63 @@ export const PRESET_CLIENTS: ClientAccountConfig[] = [
   },
 ];
 
+export function getDeletedAccountLogins(): string[] {
+  try {
+    const raw = window.localStorage.getItem(DELETED_ACCOUNTS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.map((item) => String(item).toLowerCase());
+      }
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return [];
+}
+
+function saveDeletedAccountLogins(logins: string[]): void {
+  try {
+    const unique = Array.from(new Set(logins.map((l) => l.toLowerCase())));
+    window.localStorage.setItem(DELETED_ACCOUNTS_KEY, JSON.stringify(unique));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export function getActivePresetClients(): ClientAccountConfig[] {
+  const deleted = new Set(getDeletedAccountLogins());
+  return PRESET_CLIENTS.filter((c) => !deleted.has(c.login.toLowerCase()));
+}
+
+export function getActivePresetDoctors(): DoctorAccountConfig[] {
+  const deleted = new Set(getDeletedAccountLogins());
+  return PRESET_DOCTORS.filter(
+    (d) =>
+      !deleted.has(d.login.toLowerCase()) &&
+      !deleted.has(d.doctorId.toLowerCase())
+  );
+}
+
+export function restoreAllDeletedAccounts(): void {
+  try {
+    window.localStorage.removeItem(DELETED_ACCOUNTS_KEY);
+  } catch {
+    // ignore storage errors
+  }
+}
+
 export function getRegisteredAccounts(): RegisteredAccount[] {
   try {
+    const deleted = new Set(getDeletedAccountLogins());
     const raw = window.localStorage.getItem(REGISTERED_ACCOUNTS_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        return parsed;
+        return parsed.filter(
+          (acc: RegisteredAccount) =>
+            acc && acc.login && !deleted.has(acc.login.toLowerCase())
+        );
       }
     }
   } catch {
@@ -229,28 +282,37 @@ export function syncRegisteredAccountsFromCloud(
   accounts: RegisteredAccount[]
 ): void {
   if (!Array.isArray(accounts) || accounts.length === 0) return;
+  const deleted = new Set(getDeletedAccountLogins());
   const current = getRegisteredAccounts();
   const map = new Map<string, RegisteredAccount>();
   for (const acc of current) {
-    map.set(acc.login.toLowerCase(), acc);
+    if (!deleted.has(acc.login.toLowerCase())) {
+      map.set(acc.login.toLowerCase(), acc);
+    }
   }
   for (const acc of accounts) {
-    map.set(acc.login.toLowerCase(), acc);
+    if (acc && acc.login && !deleted.has(acc.login.toLowerCase())) {
+      map.set(acc.login.toLowerCase(), acc);
+    }
   }
   saveRegisteredAccounts(Array.from(map.values()));
 }
 
 export function getStoredUserProfile(): AppUserProfile {
   try {
+    const deleted = new Set(getDeletedAccountLogins());
     const raw = window.localStorage.getItem(USER_STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as AppUserProfile;
       if (parsed && parsed.uid) {
+        if (parsed.login && deleted.has(parsed.login.toLowerCase())) {
+          return GUEST_USER_PROFILE;
+        }
         if (parsed.role === 'admin' && parsed.login === '1') {
           return SYSTEM_ADMIN_PROFILE;
         }
         if (parsed.role === 'doctor') {
-          const doc = PRESET_DOCTORS.find(
+          const doc = getActivePresetDoctors().find(
             (d) => d.doctorId === parsed.doctorId || d.login === parsed.login
           );
           if (doc) {
@@ -265,6 +327,7 @@ export function getStoredUserProfile(): AppUserProfile {
               doctorSpecialty: doc.doctorSpecialty,
             };
           }
+          return GUEST_USER_PROFILE;
         }
         if (parsed.role === 'user') {
           return parsed;
@@ -365,14 +428,23 @@ export function authenticateWithCredentials(
     return { ok: false, error: 'Неверный пароль для администратора (Логин: 1, Пароль: 1).' };
   }
 
-  // 2. Врачи (пароль 123)
-  // Маппинг алиасов (для удобства ввода из макета: volkov->volkova, sokolov->sokolova, kovalev->smirnov)
   let matchedDoctorId = cleanLogin;
   if (cleanLogin === 'volkov') matchedDoctorId = 'volkova';
   if (cleanLogin === 'sokolov') matchedDoctorId = 'sokolova';
   if (cleanLogin === 'kovalev') matchedDoctorId = 'smirnov';
 
-  const doctorConfig = PRESET_DOCTORS.find((d) => d.doctorId === matchedDoctorId || d.login === cleanLogin);
+  const deletedLogins = new Set(getDeletedAccountLogins());
+  if (deletedLogins.has(cleanLogin) || deletedLogins.has(matchedDoctorId)) {
+    return {
+      ok: false,
+      error: `Учетная запись «${cleanLogin}» была удалена. Вход невозможен.`,
+    };
+  }
+
+  // 2. Врачи (пароль 123)
+  const doctorConfig = getActivePresetDoctors().find(
+    (d) => d.doctorId === matchedDoctorId || d.login === cleanLogin
+  );
   if (doctorConfig) {
     if (cleanPassword === '123') {
       const doctorUser: AppUserProfile = {
@@ -392,7 +464,7 @@ export function authenticateWithCredentials(
   }
 
   // 3. Предустановленные клиенты: alex / 123, kate / 123
-  const presetClient = PRESET_CLIENTS.find((c) => c.login === cleanLogin);
+  const presetClient = getActivePresetClients().find((c) => c.login === cleanLogin);
   if (presetClient) {
     if (cleanPassword === '123') {
       const initials = presetClient.displayName
@@ -486,8 +558,8 @@ export function registerNewClientAccount(data: {
 
   if (
     cleanLogin === '1' ||
-    PRESET_DOCTORS.some((d) => d.login === cleanLogin) ||
-    PRESET_CLIENTS.some((c) => c.login === cleanLogin) ||
+    getActivePresetDoctors().some((d) => d.login === cleanLogin) ||
+    getActivePresetClients().some((c) => c.login === cleanLogin) ||
     ['volkov', 'sokolov', 'kovalev'].includes(cleanLogin)
   ) {
     return { ok: false, error: 'Этот логин уже занят служебной учетной записью. Выберите другой логин.' };
@@ -496,6 +568,12 @@ export function registerNewClientAccount(data: {
   const existing = getRegisteredAccounts();
   if (existing.some((acc) => acc.login.toLowerCase() === cleanLogin)) {
     return { ok: false, error: 'Пользователь с таким логином уже существует.' };
+  }
+
+  // Если этот логин ранее был удален, убираем его из черного списка удаленных
+  const currentDeleted = getDeletedAccountLogins();
+  if (currentDeleted.includes(cleanLogin)) {
+    saveDeletedAccountLogins(currentDeleted.filter((l) => l !== cleanLogin));
   }
 
   const initials = cleanFullName
@@ -550,12 +628,156 @@ export function registerNewClientAccount(data: {
   return { ok: true, user: newProfile };
 }
 
+/**
+ * Удаление учетной записи с проверкой ролевой модели (RBAC):
+ * - Пользователь (role === 'user') может удалить ТОЛЬКО свой собственный аккаунт.
+ * - Врач (role === 'doctor') НЕ МОЖЕТ удалять аккаунты (ни свой, ни чужие).
+ * - Администратор (role === 'admin') может удалить ЛЮБОЙ аккаунт клиента или врача.
+ */
+export function deleteAccountWithRoleCheck(
+  actor: AppUserProfile,
+  target: {
+    uid?: string;
+    login: string;
+    role: 'user' | 'doctor' | 'admin';
+    displayName: string;
+  }
+):
+  | {
+      ok: true;
+      message: string;
+      signedOutCurrentUser: boolean;
+      nextActiveUser: AppUserProfile;
+    }
+  | { ok: false; error: string } {
+  const cleanTargetLogin = (target.login || '').trim().toLowerCase();
+
+  if (!actor || actor.authSource === 'guest') {
+    return {
+      ok: false,
+      error: 'Гостевой пользователь не может удалять аккаунты. Войдите в систему.',
+    };
+  }
+
+  // Правило 1: Врачи НЕ могут удалять аккаунты (ни свой, ни чужой)
+  if (actor.role === 'doctor') {
+    return {
+      ok: false,
+      error:
+        'Врачам клиники запрещено удалять свою или чужую учетную запись. Управление аккаунтами персонала доступно только Главному администратору.',
+    };
+  }
+
+  // Защита главного администратора
+  if (target.role === 'admin' || cleanTargetLogin === '1') {
+    return {
+      ok: false,
+      error: 'Системная учетная запись Главного администратора защищена от удаления.',
+    };
+  }
+
+  // Правило 2: Обычный пользователь может удалить ТОЛЬКО свой собственный аккаунт
+  if (actor.role === 'user') {
+    const actorLogin = (actor.login || '').trim().toLowerCase();
+    const isSelf =
+      target.role === 'user' &&
+      ((cleanTargetLogin && cleanTargetLogin === actorLogin) ||
+        (Boolean(target.uid) && target.uid === actor.uid));
+
+    if (!isSelf) {
+      return {
+        ok: false,
+        error: 'Вы можете удалить только свой собственный аккаунт клиента.',
+      };
+    }
+  }
+
+  // Правило 3: Администратор может удалить любой аккаунт (клиента или врача)
+  // Выполняем удаление из хранилищ
+  const existingRegistered = getRegisteredAccounts();
+  const matchedRegistered = existingRegistered.find(
+    (acc) =>
+      acc.login.toLowerCase() === cleanTargetLogin ||
+      (target.uid && acc.uid === target.uid)
+  );
+
+  const remainingRegistered = existingRegistered.filter(
+    (acc) =>
+      acc.login.toLowerCase() !== cleanTargetLogin &&
+      (!target.uid || acc.uid !== target.uid)
+  );
+  saveRegisteredAccounts(remainingRegistered);
+
+  // Добавляем логин в список удаленных (чтобы демо-аккаунты alex/kate/врачи тоже удалялись)
+  if (cleanTargetLogin) {
+    const deletedList = getDeletedAccountLogins();
+    saveDeletedAccountLogins([...deletedList, cleanTargetLogin]);
+  }
+
+  // Удаляем медкарты питомцев из localStorage
+  const targetUid = matchedRegistered?.uid || target.uid || `client-${cleanTargetLogin}`;
+  try {
+    const rawPets = window.localStorage.getItem(PET_PROFILES_STORAGE_KEY);
+    if (rawPets) {
+      const map = JSON.parse(rawPets) as Record<string, ClientPetProfile>;
+      delete map[targetUid];
+      delete map[sanitizeDocId(targetUid, 'pet')];
+      window.localStorage.setItem(PET_PROFILES_STORAGE_KEY, JSON.stringify(map));
+    }
+    const rawMultiPets = window.localStorage.getItem(MULTI_PET_PROFILES_STORAGE_KEY);
+    if (rawMultiPets) {
+      const multiMap = JSON.parse(rawMultiPets) as Record<string, ClientPetProfile[]>;
+      delete multiMap[targetUid];
+      delete multiMap[sanitizeDocId(targetUid, 'pet')];
+      window.localStorage.setItem(
+        MULTI_PET_PROFILES_STORAGE_KEY,
+        JSON.stringify(multiMap)
+      );
+    }
+  } catch {
+    // ignore storage errors
+  }
+
+  // Удаляем из облака Firestore
+  if (targetUid) {
+    void deleteUserAccountFromCloud(targetUid).catch(() => {});
+  }
+
+  // Проверяем, нужно ли разлогинить текущего пользователя
+  const activeProfile = getStoredUserProfile();
+  const isDeletingActiveUser =
+    activeProfile.authSource !== 'guest' &&
+    ((cleanTargetLogin &&
+      (activeProfile.login || '').toLowerCase() === cleanTargetLogin) ||
+      (Boolean(target.uid) && activeProfile.uid === target.uid));
+
+  if (isDeletingActiveUser || actor.role === 'user') {
+    saveUserProfile(GUEST_USER_PROFILE);
+    return {
+      ok: true,
+      message: `Аккаунт «${target.displayName}» (логин: ${target.login}) успешно удален. Вы переведены в гостевой режим.`,
+      signedOutCurrentUser: true,
+      nextActiveUser: GUEST_USER_PROFILE,
+    };
+  }
+
+  return {
+    ok: true,
+    message: `Учетная запись «${target.displayName}» (логин: ${target.login}, роль: ${
+      target.role === 'doctor' ? 'Врач' : 'Клиент'
+    }) удалена администратором.`,
+    signedOutCurrentUser: false,
+    nextActiveUser: actor,
+  };
+}
+
 export async function signOutAccount(): Promise<AppUserProfile> {
   saveUserProfile(GUEST_USER_PROFILE);
   return GUEST_USER_PROFILE;
 }
 
 export interface ClientPetProfile {
+  id?: string;
   petName: string;
   petSpecies: 'Кошка' | 'Собака' | 'Грызун';
   breedAndAge: string;
@@ -565,42 +787,72 @@ export interface ClientPetProfile {
   updatedAt: string;
 }
 
-export function getClientPetProfile(
+function normalizePetCardFields(pet: ClientPetProfile, fallbackId: string): ClientPetProfile {
+  return {
+    ...pet,
+    id: pet.id || fallbackId,
+    petName: (pet.petName || '').trim(),
+    petSpecies: pet.petSpecies || 'Кошка',
+    breedAndAge:
+      pet.breedAndAge === '—' ||
+      pet.breedAndAge?.endsWith(', возраст не указан')
+        ? ''
+        : (pet.breedAndAge || '').trim(),
+    weightKg: pet.weightKg === '—' ? '' : (pet.weightKg || '').trim(),
+    chronicNotes:
+      pet.chronicNotes === 'Новый пациент клиники' ||
+      pet.chronicNotes === 'Профиль заведен при регистрации'
+        ? ''
+        : (pet.chronicNotes || '').trim(),
+    lastVaccinationDate:
+      pet.lastVaccinationDate === '—' ? '' : (pet.lastVaccinationDate || '').trim(),
+    updatedAt: pet.updatedAt || new Date().toLocaleDateString('ru-RU'),
+  };
+}
+
+/**
+ * Возвращает список всех питомцев клиента (поддержка нескольких питомцев в одном аккаунте).
+ */
+export function getClientPetProfiles(
   user?: AppUserProfile | null
-): ClientPetProfile | null {
-  if (!user || user.authSource === 'guest') return null;
+): ClientPetProfile[] {
+  if (!user || user.authSource === 'guest') return [];
 
   try {
-    const raw = window.localStorage.getItem(PET_PROFILES_STORAGE_KEY);
-    if (raw) {
-      const map = JSON.parse(raw) as Record<string, ClientPetProfile>;
-      const byUid = map[user.uid] || map[sanitizeDocId(user.uid, 'pet')];
-      if (byUid) {
-        return {
-          ...byUid,
-          breedAndAge:
-            byUid.breedAndAge === '—' ||
-            byUid.breedAndAge?.endsWith(', возраст не указан')
-              ? ''
-              : byUid.breedAndAge,
-          weightKg: byUid.weightKg === '—' ? '' : byUid.weightKg,
-          chronicNotes:
-            byUid.chronicNotes === 'Новый пациент клиники' ||
-            byUid.chronicNotes === 'Профиль заведен при регистрации'
-              ? ''
-              : byUid.chronicNotes,
-          lastVaccinationDate:
-            byUid.lastVaccinationDate === '—' ? '' : byUid.lastVaccinationDate,
-        };
+    const rawMulti = window.localStorage.getItem(MULTI_PET_PROFILES_STORAGE_KEY);
+    if (rawMulti) {
+      const multiMap = JSON.parse(rawMulti) as Record<string, ClientPetProfile[]>;
+      const storedList =
+        multiMap[user.uid] || multiMap[sanitizeDocId(user.uid, 'pet')];
+      if (Array.isArray(storedList) && storedList.length > 0) {
+        return storedList.map((pet, idx) =>
+          normalizePetCardFields(pet, `pet-${user.uid}-${idx + 1}`)
+        );
       }
     }
   } catch {
     // ignore storage errors
   }
 
-  // Pre-configured pet profiles for demo clients
+  // Проверяем одиночное хранилище для обратной совместимости
+  let legacySingle: ClientPetProfile | null = null;
+  try {
+    const raw = window.localStorage.getItem(PET_PROFILES_STORAGE_KEY);
+    if (raw) {
+      const map = JSON.parse(raw) as Record<string, ClientPetProfile>;
+      const byUid = map[user.uid] || map[sanitizeDocId(user.uid, 'pet')];
+      if (byUid && byUid.petName) {
+        legacySingle = normalizePetCardFields(byUid, `pet-${user.uid}-1`);
+      }
+    }
+  } catch {
+    // ignore storage errors
+  }
+
+  // Преднастроенные профили нескольких питомцев для демо-клиентов
   if (user.login === 'alex' || user.uid === 'client-alex') {
-    return {
+    const primaryAlex: ClientPetProfile = legacySingle || {
+      id: 'pet-alex-1',
       petName: 'Марсель',
       petSpecies: 'Кошка',
       breedAndAge: 'Шотландский вислоухий, 9 лет',
@@ -609,10 +861,24 @@ export function getClientPetProfile(
       lastVaccinationDate: '2026-03-10',
       updatedAt: '19.10.2026',
     };
+    const secondAlex: ClientPetProfile = {
+      id: 'pet-alex-2',
+      petName: 'Арчи',
+      petSpecies: 'Собака',
+      breedAndAge: 'Золотистый ретривер, 4 года',
+      weightKg: '31.5',
+      chronicNotes: 'Плановая вакцинация и обработка от клещей',
+      lastVaccinationDate: '2026-05-14',
+      updatedAt: '19.10.2026',
+    };
+    return primaryAlex.petName.toLowerCase() === 'арчи'
+      ? [primaryAlex]
+      : [primaryAlex, secondAlex];
   }
 
   if (user.login === 'kate' || user.uid === 'client-kate') {
-    return {
+    const primaryKate: ClientPetProfile = legacySingle || {
+      id: 'pet-kate-1',
       petName: 'Пончик',
       petSpecies: 'Грызун',
       breedAndAge: 'Карликовый кролик, 2 года',
@@ -621,69 +887,193 @@ export function getClientPetProfile(
       lastVaccinationDate: '2026-04-05',
       updatedAt: '19.10.2026',
     };
+    const secondKate: ClientPetProfile = {
+      id: 'pet-kate-2',
+      petName: 'Буся',
+      petSpecies: 'Кошка',
+      breedAndAge: 'Мейн-кун, 3 года',
+      weightKg: '6.2',
+      chronicNotes: 'Плановый биохимический чек-ап, чувствительное пищеварение',
+      lastVaccinationDate: '2026-02-20',
+      updatedAt: '19.10.2026',
+    };
+    return primaryKate.petName.toLowerCase() === 'буся'
+      ? [primaryKate]
+      : [primaryKate, secondKate];
+  }
+
+  if (legacySingle) {
+    return [legacySingle];
   }
 
   if (user.petName) {
-    return {
-      petName: user.petName,
-      petSpecies: user.petSpecies || 'Кошка',
-      breedAndAge: '',
-      weightKg: '',
-      chronicNotes: '',
-      lastVaccinationDate: '',
-      updatedAt: new Date().toLocaleDateString('ru-RU'),
-    };
+    return [
+      {
+        id: `pet-${user.uid}-1`,
+        petName: user.petName,
+        petSpecies: user.petSpecies || 'Кошка',
+        breedAndAge: '',
+        weightKg: '',
+        chronicNotes: '',
+        lastVaccinationDate: '',
+        updatedAt: new Date().toLocaleDateString('ru-RU'),
+      },
+    ];
   }
 
-  return null;
+  return [];
+}
+
+export function getClientPetProfile(
+  user?: AppUserProfile | null
+): ClientPetProfile | null {
+  const list = getClientPetProfiles(user);
+  return list[0] || null;
+}
+
+function syncPrimaryPetToUserAndLegacyStorage(
+  user: AppUserProfile,
+  petsList: ClientPetProfile[]
+): void {
+  const primary = petsList[0];
+  try {
+    // Сохраняем весь список в MULTI_PET_PROFILES_STORAGE_KEY
+    const rawMulti = window.localStorage.getItem(MULTI_PET_PROFILES_STORAGE_KEY);
+    const multiMap: Record<string, ClientPetProfile[]> = rawMulti
+      ? JSON.parse(rawMulti)
+      : {};
+    multiMap[user.uid] = petsList;
+    multiMap[sanitizeDocId(user.uid, 'pet')] = petsList;
+    window.localStorage.setItem(
+      MULTI_PET_PROFILES_STORAGE_KEY,
+      JSON.stringify(multiMap)
+    );
+
+    // Синхронизируем основного (первого) питомца в одиночное хранилище и профиль
+    if (primary) {
+      const rawSingle = window.localStorage.getItem(PET_PROFILES_STORAGE_KEY);
+      const singleMap: Record<string, ClientPetProfile> = rawSingle
+        ? JSON.parse(rawSingle)
+        : {};
+      singleMap[user.uid] = primary;
+      singleMap[sanitizeDocId(user.uid, 'pet')] = primary;
+      window.localStorage.setItem(
+        PET_PROFILES_STORAGE_KEY,
+        JSON.stringify(singleMap)
+      );
+
+      if (user.role === 'user' && primary.petName) {
+        const updatedUser: AppUserProfile = {
+          ...user,
+          petName: primary.petName,
+          petSpecies: primary.petSpecies,
+        };
+        saveUserProfile(updatedUser);
+
+        const accounts = getRegisteredAccounts();
+        const idx = accounts.findIndex((a) => a.uid === user.uid);
+        if (idx !== -1) {
+          accounts[idx] = {
+            ...accounts[idx],
+            petName: primary.petName,
+            petSpecies: primary.petSpecies,
+          };
+          saveRegisteredAccounts(accounts);
+        }
+      }
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
+
+/**
+ * Добавляет нового питомца или обновляет карточку существующего питомца у клиента.
+ */
+export function upsertClientPetProfile(
+  user: AppUserProfile,
+  profile: ClientPetProfile
+): { pets: ClientPetProfile[]; savedPet: ClientPetProfile } {
+  const existingPets = getClientPetProfiles(user);
+  const targetId =
+    profile.id ||
+    `pet-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
+  const normalized: ClientPetProfile = {
+    id: targetId,
+    petName: profile.petName.trim(),
+    petSpecies: profile.petSpecies || 'Кошка',
+    breedAndAge: profile.breedAndAge.trim(),
+    weightKg: profile.weightKg.trim(),
+    chronicNotes: profile.chronicNotes.trim(),
+    lastVaccinationDate: (profile.lastVaccinationDate || '').trim(),
+    updatedAt: new Date().toLocaleDateString('ru-RU'),
+  };
+
+  const existingIndex = existingPets.findIndex(
+    (p) =>
+      (profile.id && p.id === profile.id) ||
+      (!profile.id &&
+        p.petName.trim().toLowerCase() === normalized.petName.toLowerCase())
+  );
+
+  let nextPets: ClientPetProfile[];
+  if (existingIndex !== -1) {
+    nextPets = [...existingPets];
+    nextPets[existingIndex] = {
+      ...normalized,
+      id: existingPets[existingIndex].id || targetId,
+    };
+  } else {
+    nextPets = [...existingPets, normalized];
+  }
+
+  const finalSaved =
+    existingIndex !== -1 ? nextPets[existingIndex] : normalized;
+
+  syncPrimaryPetToUserAndLegacyStorage(user, nextPets);
+
+  // Синхронизируем с облаком Firestore (как основной профиль и индивидуальный документ питомца)
+  if (nextPets[0]) {
+    void savePetProfileToCloud(user.uid, nextPets[0]).catch(() => {});
+  }
+  void savePetProfileToCloud(`${user.uid}_${finalSaved.id}`, finalSaved).catch(
+    () => {}
+  );
+
+  return { pets: nextPets, savedPet: finalSaved };
+}
+
+/**
+ * Удаляет карточку питомца по ID из списка питомцев клиента.
+ */
+export function deleteClientPetProfile(
+  user: AppUserProfile,
+  petId: string
+): ClientPetProfile[] {
+  const existingPets = getClientPetProfiles(user);
+  const nextPets = existingPets.filter((p) => p.id !== petId);
+
+  syncPrimaryPetToUserAndLegacyStorage(user, nextPets);
+
+  if (nextPets[0]) {
+    void savePetProfileToCloud(user.uid, nextPets[0]).catch(() => {});
+  }
+
+  return nextPets;
 }
 
 export function saveClientPetProfile(
   user: AppUserProfile,
   profile: ClientPetProfile
 ): ClientPetProfile {
-  const normalized: ClientPetProfile = {
+  const existingPets = getClientPetProfiles(user);
+  const targetId = profile.id || existingPets[0]?.id || `pet-${user.uid}-1`;
+  const { savedPet } = upsertClientPetProfile(user, {
     ...profile,
-    petName: profile.petName.trim(),
-    breedAndAge: profile.breedAndAge.trim(),
-    weightKg: profile.weightKg.trim(),
-    chronicNotes: profile.chronicNotes.trim(),
-    updatedAt: new Date().toLocaleDateString('ru-RU'),
-  };
-  try {
-    const raw = window.localStorage.getItem(PET_PROFILES_STORAGE_KEY);
-    const map: Record<string, ClientPetProfile> = raw ? JSON.parse(raw) : {};
-    map[user.uid] = normalized;
-    map[sanitizeDocId(user.uid, 'pet')] = normalized;
-    window.localStorage.setItem(PET_PROFILES_STORAGE_KEY, JSON.stringify(map));
-
-    // Sync updated petName and petSpecies to active user profile and registered accounts if applicable
-    if (user.role === 'user' && normalized.petName) {
-      const updatedUser: AppUserProfile = {
-        ...user,
-        petName: normalized.petName,
-        petSpecies: normalized.petSpecies,
-      };
-      saveUserProfile(updatedUser);
-
-      const accounts = getRegisteredAccounts();
-      const idx = accounts.findIndex((a) => a.uid === user.uid);
-      if (idx !== -1) {
-        accounts[idx] = {
-          ...accounts[idx],
-          petName: normalized.petName,
-          petSpecies: normalized.petSpecies,
-        };
-        saveRegisteredAccounts(accounts);
-      }
-    }
-  } catch {
-    // ignore storage errors
-  }
-
-  void savePetProfileToCloud(user.uid, normalized).catch(() => {});
-
-  return normalized;
+    id: targetId,
+  });
+  return savedPet;
 }
 
 export function syncPetProfilesFromCloud(

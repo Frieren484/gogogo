@@ -570,6 +570,24 @@ export async function saveUserAccountToCloud(
   }
 }
 
+export async function deleteUserAccountFromCloud(uid: string): Promise<void> {
+  const safeUid = sanitizeDocId(uid, 'user');
+  const safePetId = sanitizeDocId(uid, 'pet');
+  try {
+    await Promise.all([
+      deleteDoc(doc(db, 'users', safeUid)),
+      deleteDoc(doc(db, 'pet_profiles', safePetId)),
+    ]);
+    notifyStatusListeners({
+      state: 'connected',
+      lastSyncedAt: nowTimeLabel(),
+      errorMessage: undefined,
+    });
+  } catch {
+    // Ignore cloud delete error if offline or document does not exist
+  }
+}
+
 /**
  * Forces a full re-seed / push of current or default clinic data to Firestore
  */

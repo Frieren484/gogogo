@@ -8,6 +8,7 @@ import {
   Download,
   PawPrint,
   Phone,
+  Plus,
   ShieldCheck,
   Stethoscope,
   User,
@@ -29,7 +30,12 @@ import {
   SERVICES_DATA,
   ShiftScheduleConfig,
 } from '../data/clinicData';
-import { AppUserProfile, getClientPetProfile } from '../services/authService';
+import {
+  AppUserProfile,
+  ClientPetProfile,
+  getClientPetProfiles,
+  upsertClientPetProfile,
+} from '../services/authService';
 import {
   downloadAppointmentVoucher,
   getPreparationAdvice,
@@ -77,6 +83,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const [phone, setPhone] = useState('');
   const [petSpecies, setPetSpecies] = useState<string>('Кошка');
   const [petName, setPetName] = useState('');
+  const [userPets, setUserPets] = useState<ClientPetProfile[]>([]);
+  const [selectedUserPetId, setSelectedUserPetId] = useState<string>('new');
   const [selectedService, setSelectedService] = useState<string>(
     servicesList[0]?.title || SERVICES_DATA[0].title
   );
@@ -203,6 +211,26 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     servicesList,
   ]);
 
+  const applySavedPetToBooking = (
+    pet: ClientPetProfile,
+    respectPrefillPetType = false
+  ) => {
+    setSelectedUserPetId(pet.id || pet.petName);
+    setPetName(pet.petName);
+    if (!respectPrefillPetType || !prefill?.petType) {
+      setPetSpecies(pet.petSpecies);
+    }
+    const cardNotes = [
+      pet.breedAndAge && pet.breedAndAge !== '—' ? pet.breedAndAge : '',
+      pet.weightKg && pet.weightKg !== '—' ? `вес ${pet.weightKg} кг` : '',
+      pet.chronicNotes && pet.chronicNotes !== '—' ? pet.chronicNotes : '',
+    ]
+      .filter(Boolean)
+      .join(', ');
+    setNotes(cardNotes);
+    setAutoFilledFromPetCard(true);
+  };
+
   useEffect(() => {
     if (isOpen) {
       setErrorMessage('');
@@ -217,28 +245,22 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         setOwnerName(currentUser.displayName.replace(/\s*\(.*?\)\s*/g, '').trim());
         setPhone(currentUser.phone || '');
 
-        const savedPetCard = getClientPetProfile(currentUser);
-        if (savedPetCard && savedPetCard.petName) {
-          setPetName(savedPetCard.petName);
-          if (!prefill?.petType) {
-            setPetSpecies(savedPetCard.petSpecies);
-          }
-          const cardNotes = [
-            savedPetCard.breedAndAge && savedPetCard.breedAndAge !== '—'
-              ? savedPetCard.breedAndAge
-              : '',
-            savedPetCard.weightKg && savedPetCard.weightKg !== '—'
-              ? `вес ${savedPetCard.weightKg} кг`
-              : '',
-            savedPetCard.chronicNotes && savedPetCard.chronicNotes !== '—'
-              ? savedPetCard.chronicNotes
-              : '',
-          ]
-            .filter(Boolean)
-            .join(', ');
-          setNotes(cardNotes);
-          setAutoFilledFromPetCard(true);
+        const savedPetsList = getClientPetProfiles(currentUser);
+        setUserPets(savedPetsList);
+
+        // Если в калькуляторе выбран вид питомца, стараемся сначала выбрать питомца подходящего вида
+        const prefillSpeciesLabel = prefill?.petType
+          ? PET_TYPES_CONFIG[prefill.petType].label
+          : undefined;
+        const matchedBySpecies = prefillSpeciesLabel
+          ? savedPetsList.find((p) => p.petSpecies === prefillSpeciesLabel)
+          : undefined;
+        const initialPet = matchedBySpecies || savedPetsList[0];
+
+        if (initialPet && initialPet.petName) {
+          applySavedPetToBooking(initialPet, true);
         } else {
+          setSelectedUserPetId('new');
           setPetName(currentUser.petName || '');
           if (!prefill?.petType && currentUser.petSpecies) {
             setPetSpecies(currentUser.petSpecies);
@@ -246,6 +268,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
           setNotes('');
         }
       } else {
+        setUserPets([]);
+        setSelectedUserPetId('new');
         setOwnerName('');
         setPhone('');
         setPetName('');
@@ -360,6 +384,25 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     const finalNotes =
       notes.trim() ||
       (prefill?.isEmergency ? 'Экстренный вызов через сайт' : 'Запись онлайн через сайт');
+
+    // Если клиент указал нового питомца, автоматически сохраняем его в список питомцев клиента
+    if (currentUser.role === 'user') {
+      const alreadyExists = userPets.some(
+        (p) => p.petName.trim().toLowerCase() === trimmedPet.toLowerCase()
+      );
+      if (!alreadyExists) {
+        const { pets: nextList } = upsertClientPetProfile(currentUser, {
+          petName: trimmedPet,
+          petSpecies: (petSpecies as 'Кошка' | 'Собака' | 'Грызун') || 'Кошка',
+          breedAndAge: '',
+          weightKg: '',
+          chronicNotes: notes.trim(),
+          lastVaccinationDate: '',
+          updatedAt: new Date().toLocaleDateString('ru-RU'),
+        });
+        setUserPets(nextList);
+      }
+    }
 
     const newRecord: AppointmentRecord = {
       id: `LP-${Math.floor(100000 + Math.random() * 900000)}`,
@@ -599,6 +642,61 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               </div>
             </div>
 
+            {/* Панель быстрого выбора одного из нескольких питомцев клиента */}
+            {userPets.length > 0 && (
+              <div className="rounded-xl bg-[#F4FAF8] border border-[#CFE2DA] p-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-[#122B24] flex items-center gap-1.5">
+                    <PawPrint className="w-3.5 h-3.5 text-[#0D9488]" />
+                    <span>Выберите вашего питомца для записи ({userPets.length}):</span>
+                  </span>
+                  <span className="text-[11px] text-[#35524A]">
+                    Автоподстановка медкарты
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {userPets.map((pet) => {
+                    const keyId = pet.id || pet.petName;
+                    const isSelected = selectedUserPetId === keyId;
+                    return (
+                      <button
+                        key={keyId}
+                        type="button"
+                        onClick={() => applySavedPetToBooking(pet, false)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 transition-snappy cursor-pointer ${
+                          isSelected
+                            ? 'bg-[#0D9488] text-white shadow-xs'
+                            : 'bg-white border border-[#CFE2DA] text-[#122B24] hover:border-[#0D9488]'
+                        }`}
+                      >
+                        <PawPrint className="w-3.5 h-3.5" />
+                        <span>
+                          {pet.petName} ({pet.petSpecies})
+                        </span>
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedUserPetId('new');
+                      setPetName('');
+                      setNotes('');
+                      setAutoFilledFromPetCard(false);
+                    }}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold inline-flex items-center gap-1 transition-snappy cursor-pointer ${
+                      selectedUserPetId === 'new'
+                        ? 'bg-[#F97316] text-white shadow-xs'
+                        : 'bg-white border border-[#CFE2DA] text-[#35524A] hover:text-[#122B24]'
+                    }`}
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Другой питомец</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-[#122B24] mb-1.5">
@@ -629,7 +727,10 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 <input
                   type="text"
                   value={petName}
-                  onChange={(e) => setPetName(e.target.value)}
+                  onChange={(e) => {
+                    setPetName(e.target.value);
+                    setAutoFilledFromPetCard(false);
+                  }}
                   placeholder="Например, Барсик или Ричард"
                   className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-[#CFE2DA] bg-white text-[#122B24] focus:outline-none focus:border-[#0D9488]"
                   required
