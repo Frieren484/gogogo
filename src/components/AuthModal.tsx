@@ -857,7 +857,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                           className="flex-1 text-left cursor-pointer"
                         >
                           <div className="text-xs font-bold text-blue-950">
-                            Главный Администратор CRM «Лапа Помощи»
+                            Главный Администратор CRM «ЛапУшки»
                           </div>
                           <div className="text-[11px] font-mono text-blue-800 mt-0.5">
                             Логин: <strong>1</strong> · Пароль: <strong>1</strong> (нажмите для подстановки)
